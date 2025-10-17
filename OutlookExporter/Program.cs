@@ -60,16 +60,37 @@ try
     // Add primary mailbox
     availableMailboxes.Add((user?.DisplayName ?? "Primary Mailbox", user?.Mail ?? user?.UserPrincipalName ?? "", "Primary"));
 
-    // Try to get shared mailboxes (this may require additional permissions)
+    // Try to discover shared mailboxes
+    Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
     try
     {
-        // Note: This queries for mailboxes where user has FullAccess permission
-        // For now, we'll offer manual input as shared mailbox discovery requires admin Graph permissions
-        Console.WriteLine("\nNote: To access shared/delegated mailboxes, you'll need to know their email addresses.");
+        // Note: Microsoft Graph API with delegated permissions has limited shared mailbox discovery
+        // The most reliable methods require admin permissions (User.Read.All, Mail.Read.All)
+
+        // Try to detect from mailbox settings
+        var mailboxSettings = await graphClient.Me.MailboxSettings.GetAsync();
+
+        // Check for delegated mailboxes in user's mailbox settings
+        // This is limited but might provide some information
+        if (mailboxSettings?.DelegateMeetingMessageDeliveryOptions != null)
+        {
+            Console.WriteLine("Found delegation settings in mailbox configuration.");
+        }
+
+        // Alternative approach: Guide user to find their shared mailboxes
+        Console.WriteLine("\nTo find your shared mailbox email addresses:");
+        Console.WriteLine("  1. Open Outlook (desktop or web)");
+        Console.WriteLine("  2. Look for additional mailboxes in your folder list");
+        Console.WriteLine("  3. Right-click the shared mailbox → Properties → Email address");
+        Console.WriteLine("  4. Or ask your IT administrator for the shared mailbox addresses");
+
+        Console.WriteLine("\nNote: Automatic discovery requires admin-level Graph permissions.");
+        Console.WriteLine("      You can manually enter shared mailbox addresses below.");
     }
-    catch
+    catch (Exception ex)
     {
-        // Ignore errors from shared mailbox discovery
+        Console.WriteLine($"Note: Limited mailbox discovery: {ex.Message}");
+        Console.WriteLine("      You can still manually enter shared mailbox addresses below.");
     }
 
     Console.WriteLine($"\nFound {availableMailboxes.Count} mailbox(es):");
@@ -92,6 +113,35 @@ try
             Console.Write("Enter mailbox email address: ");
             selectedMailboxEmail = Console.ReadLine() ?? "";
             selectedMailboxName = selectedMailboxEmail;
+
+            // Validate access to the mailbox
+            Console.WriteLine($"\nValidating access to {selectedMailboxEmail}...");
+            try
+            {
+                var testAccess = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync(requestConfig =>
+                {
+                    requestConfig.QueryParameters.Top = 1;
+                });
+
+                Console.WriteLine("✓ Access confirmed! You have permission to access this mailbox.");
+            }
+            catch (Exception validateEx)
+            {
+                Console.WriteLine($"✗ Access validation failed: {validateEx.Message}");
+                Console.WriteLine("\nPossible reasons:");
+                Console.WriteLine("  1. Missing 'Mail.Read.Shared' permission in Azure Portal");
+                Console.WriteLine("  2. No 'Full Access' permission on this mailbox in Exchange");
+                Console.WriteLine("  3. Incorrect mailbox email address");
+                Console.WriteLine("  4. Admin consent not granted (organizational accounts)");
+                Console.WriteLine("\nWould you like to continue anyway? (y/n): ");
+                var cont = Console.ReadLine();
+                if (cont?.ToLower() != "y")
+                {
+                    Console.WriteLine("Returning to primary mailbox.");
+                    selectedMailboxEmail = user?.Mail ?? user?.UserPrincipalName ?? "";
+                    selectedMailboxName = user?.DisplayName ?? "Primary";
+                }
+            }
         }
         else if (selectedIndex > 0 && selectedIndex <= availableMailboxes.Count)
         {
