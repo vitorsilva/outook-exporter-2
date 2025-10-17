@@ -23,7 +23,7 @@ try
     Console.WriteLine("Initializing authentication...");
 
     // Create DeviceCodeCredential for authentication
-    var scopes = new[] { "User.Read", "Mail.Read", "Mail.ReadBasic", "MailboxSettings.Read" };
+    var scopes = new[] { "User.Read", "Mail.Read", "Mail.ReadBasic", "Mail.Read.Shared", "MailboxSettings.Read" };
 
     var options = new DeviceCodeCredentialOptions
     {
