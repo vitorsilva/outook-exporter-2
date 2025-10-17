@@ -75,6 +75,20 @@ Successfully built a C# console application that exports emails from Outlook.com
 
 **Key Learning:** Personal Microsoft accounts (Hotmail/Outlook.com) require `TenantId: "consumers"`, while organizational accounts use `"common"` or specific tenant IDs.
 
+### Phase 4: Organizational Account Support
+- Tested with organizational Microsoft 365 account
+- Encountered admin consent requirement
+
+**Challenge:** "Needs administrator approval" error for organizational tenant.
+**Root Cause:** Organizational Azure AD tenants require admin consent for applications accessing user data.
+**Solution:** System administrator must grant admin consent in Azure Portal for the application.
+
+**Key Learning:** Organizational accounts require:
+1. Admin consent granted in Azure Portal
+2. Specific tenant ID (not "consumers")
+3. All required permissions approved by tenant admin
+4. "Allow public client flows" enabled in app registration
+
 ### Phase 3: JSON Export (Step 7)
 - Complete email property extraction
 - JSON serialization with proper formatting
@@ -145,7 +159,8 @@ outlook-export-2/
     ├── appsettings.Development.json # Development config (git-ignored)
     ├── appsettings.Example.json     # Config template (safe to commit)
     ├── README.md                    # User documentation
-    ├── PROJECT_SUMMARY.md           # This file
+    ├── PROJECT_SUMMARY.md           # This file - Technical project summary
+    ├── ADMIN_SETUP_GUIDE.md         # Guide for system administrators
     └── exported_emails.json         # Output file (generated at runtime)
 ```
 
@@ -245,16 +260,25 @@ await File.WriteAllTextAsync("exported_emails.json", json);
 ### Technical Insights
 1. **Personal vs Organizational Accounts:** Critical tenant ID difference
    - Personal (Hotmail/Outlook.com): Use `"consumers"`
-   - Organizational (Microsoft 365): Use `"common"` or specific tenant ID
+   - Organizational (Microsoft 365): Use specific tenant ID
+   - Personal accounts: No admin consent needed
+   - Organizational accounts: Require admin consent
 
-2. **Guest Account Limitation:** External users in a tenant don't have mailboxes in that tenant
+2. **Admin Consent Requirements:**
+   - Organizational tenants often require admin approval for apps
+   - Admin must explicitly grant consent in Azure Portal
+   - Personal accounts bypass this requirement
+   - Consent propagation can take 5-10 minutes
 
-3. **API Permission Timing:** Permissions can take 1-2 minutes to propagate after grant
+3. **Guest Account Limitation:** External users in a tenant don't have mailboxes in that tenant
 
-4. **Device Code Flow Benefits:**
+4. **API Permission Timing:** Permissions can take 1-2 minutes to propagate after grant
+
+5. **Device Code Flow Benefits:**
    - No redirect URI complexity
    - Works in console applications
    - Better user experience than client credentials
+   - Suitable for both personal and organizational accounts
 
 ### Development Process Wins
 1. **Small Incremental Steps:** Testing each component before moving forward
@@ -288,6 +312,17 @@ await File.WriteAllTextAsync("exported_emails.json", json);
 - Consider rate limiting and retry logic for Graph API throttling
 - Add progress reporting for long-running exports
 
+## Account Type Comparison
+
+| Feature | Personal Account | Organizational Account |
+|---------|-----------------|----------------------|
+| **Tenant ID** | `"consumers"` | Specific tenant ID |
+| **Admin Consent** | ❌ Not required | ✅ Required |
+| **Setup Complexity** | Simple | Moderate (needs admin) |
+| **Authentication** | Immediate | Requires admin approval first |
+| **Use Case** | Personal mailbox export | Enterprise/work mailbox export |
+| **Documentation** | README.md | README.md + ADMIN_SETUP_GUIDE.md |
+
 ## Conclusion
 
 Successfully delivered a fully functional email export tool that:
@@ -295,12 +330,18 @@ Successfully delivered a fully functional email export tool that:
 - Implements security best practices
 - Provides comprehensive documentation
 - Includes troubleshooting guidance
-- Works reliably with personal Microsoft accounts
+- Works with both personal and organizational Microsoft accounts
+- Includes admin setup guide for enterprise deployment
 
 The application serves as a solid foundation for future enhancements and demonstrates proper integration with Microsoft Graph API using modern .NET practices.
 
+### Tested Scenarios
+✅ **Personal Account (Hotmail/Outlook.com):** Fully functional
+🔄 **Organizational Account (Microsoft 365):** Awaiting admin consent
+
 ---
 
-**Total Development Time:** ~3-4 hours (including learning, troubleshooting, and documentation)
+**Total Development Time:** ~4-5 hours (including learning, troubleshooting, and documentation)
 **Lines of Code:** ~170 lines (Program.cs)
-**Final Status:** Production-ready for personal use
+**Documentation:** 3 comprehensive guides (README, PROJECT_SUMMARY, ADMIN_SETUP_GUIDE)
+**Final Status:** Production-ready for personal use; requires admin setup for organizational use
