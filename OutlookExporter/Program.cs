@@ -50,12 +50,76 @@ try
     Console.WriteLine($"Logged in as: {user?.DisplayName}");
     Console.WriteLine($"Email: {user?.Mail ?? user?.UserPrincipalName}");
 
+    // Discover available mailboxes
+    Console.WriteLine("\n" + new string('=', 50));
+    Console.WriteLine("Discovering available mailboxes...");
+    Console.WriteLine(new string('=', 50));
+
+    var availableMailboxes = new List<(string DisplayName, string Email, string Type)>();
+
+    // Add primary mailbox
+    availableMailboxes.Add((user?.DisplayName ?? "Primary Mailbox", user?.Mail ?? user?.UserPrincipalName ?? "", "Primary"));
+
+    // Try to get shared mailboxes (this may require additional permissions)
+    try
+    {
+        // Note: This queries for mailboxes where user has FullAccess permission
+        // For now, we'll offer manual input as shared mailbox discovery requires admin Graph permissions
+        Console.WriteLine("\nNote: To access shared/delegated mailboxes, you'll need to know their email addresses.");
+    }
+    catch
+    {
+        // Ignore errors from shared mailbox discovery
+    }
+
+    Console.WriteLine($"\nFound {availableMailboxes.Count} mailbox(es):");
+    for (int i = 0; i < availableMailboxes.Count; i++)
+    {
+        Console.WriteLine($"  [{i + 1}] {availableMailboxes[i].DisplayName} ({availableMailboxes[i].Email}) - {availableMailboxes[i].Type}");
+    }
+    Console.WriteLine($"  [0] Enter custom mailbox email address");
+
+    Console.Write("\nSelect mailbox (enter number): ");
+    var selection = Console.ReadLine();
+
+    string selectedMailboxEmail = "";
+    string selectedMailboxName = "";
+
+    if (int.TryParse(selection, out int selectedIndex))
+    {
+        if (selectedIndex == 0)
+        {
+            Console.Write("Enter mailbox email address: ");
+            selectedMailboxEmail = Console.ReadLine() ?? "";
+            selectedMailboxName = selectedMailboxEmail;
+        }
+        else if (selectedIndex > 0 && selectedIndex <= availableMailboxes.Count)
+        {
+            selectedMailboxEmail = availableMailboxes[selectedIndex - 1].Email;
+            selectedMailboxName = availableMailboxes[selectedIndex - 1].DisplayName;
+        }
+        else
+        {
+            Console.WriteLine("Invalid selection, using primary mailbox.");
+            selectedMailboxEmail = user?.Mail ?? user?.UserPrincipalName ?? "";
+            selectedMailboxName = user?.DisplayName ?? "Primary";
+        }
+    }
+    else
+    {
+        Console.WriteLine("Invalid input, using primary mailbox.");
+        selectedMailboxEmail = user?.Mail ?? user?.UserPrincipalName ?? "";
+        selectedMailboxName = user?.DisplayName ?? "Primary";
+    }
+
+    Console.WriteLine($"\nSelected mailbox: {selectedMailboxName} ({selectedMailboxEmail})");
+
     // List all mail folders
     Console.WriteLine("\n" + new string('=', 50));
     Console.WriteLine("Retrieving mail folders...");
     Console.WriteLine(new string('=', 50));
 
-    var folders = await graphClient.Me.MailFolders.GetAsync();
+    var folders = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync();
 
     if (folders?.Value != null && folders.Value.Count > 0)
     {
@@ -83,7 +147,7 @@ try
     Console.WriteLine(new string('=', 50));
 
     // Get emails with all properties except attachments
-    var messages = await graphClient.Me.MailFolders["Inbox"].Messages
+    var messages = await graphClient.Users[selectedMailboxEmail].MailFolders["Inbox"].Messages
         .GetAsync(requestConfig =>
         {
             requestConfig.QueryParameters.Top = 5; // Get only 5 emails for testing
