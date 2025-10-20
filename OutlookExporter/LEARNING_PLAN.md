@@ -824,10 +824,10 @@ dotnet run
 
 ---
 
-## Phase 5: Multi-Mailbox Support (1 hour)
+## Phase 5: Multi-Mailbox Support & Advanced Features (2-3 hours)
 
 ### Goal
-Access shared/delegated mailboxes beyond primary mailbox.
+Access shared/delegated mailboxes, implement command-line automation, and add recursive folder discovery.
 
 ### Step 5.1: Understand Mailbox Access Patterns
 
@@ -852,93 +852,284 @@ await graphClient.Users["shared@company.com"].MailFolders["Inbox"].Messages.GetA
 - Or mailbox must be delegated to user
 - Configured by Exchange admin
 
-### Step 5.2: Implement Mailbox Discovery
+### Step 5.2: Implement Automatic Mailbox Discovery
 
-**What you'll learn**: User input, menu system, dynamic endpoint selection
+**What you'll learn**: Azure AD queries, disabled accounts, shared mailbox discovery
 
-**Code to Add**:
+**Add Permission**:
 ```csharp
-Console.WriteLine("\n" + new string('=', 50));
-Console.WriteLine("Discovering available mailboxes...");
-Console.WriteLine(new string('=', 50));
-
-var availableMailboxes = new List<(string DisplayName, string Email, string Type)>();
-
-// Add primary mailbox
-availableMailboxes.Add((
-    user?.DisplayName ?? "Primary Mailbox",
-    user?.Mail ?? user?.UserPrincipalName ?? "",
-    "Primary"
-));
-
-Console.WriteLine($"\nFound {availableMailboxes.Count} mailbox(es):");
-for (int i = 0; i < availableMailboxes.Count; i++)
-{
-    Console.WriteLine($"  [{i + 1}] {availableMailboxes[i].DisplayName} ({availableMailboxes[i].Email}) - {availableMailboxes[i].Type}");
-}
-Console.WriteLine($"  [0] Enter custom mailbox email address");
+var scopes = new[] {
+    "User.Read",
+    "User.Read.All",  // ← Add this for mailbox discovery
+    "Mail.Read",
+    "Mail.ReadBasic",
+    "Mail.Read.Shared",
+    "MailboxSettings.Read"
+};
 ```
 
-### Step 5.3: Implement Mailbox Selection
-
-**Code to Add**:
+**Discovery Code**:
 ```csharp
-Console.Write("\nSelect mailbox (enter number): ");
-var selection = Console.ReadLine();
+Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
 
-string selectedMailboxEmail = "";
-string selectedMailboxName = "";
+// Query for disabled accounts (traditional shared mailboxes)
+var users = await graphClient.Users
+    .GetAsync(requestConfig =>
+    {
+        requestConfig.QueryParameters.Filter = "accountEnabled eq false";
+        requestConfig.QueryParameters.Select = new[] { "displayName", "mail", "userPrincipalName" };
+    });
 
-if (int.TryParse(selection, out int selectedIndex))
+// Test access to each potential mailbox
+foreach (var potentialMailbox in users.Value)
 {
-    if (selectedIndex == 0)
+    try
     {
-        Console.Write("Enter mailbox email address: ");
-        selectedMailboxEmail = Console.ReadLine() ?? "";
-        selectedMailboxName = selectedMailboxEmail;
+        await graphClient.Users[potentialMailbox.Mail]
+            .MailFolders
+            .GetAsync(requestConfig =>
+            {
+                requestConfig.QueryParameters.Top = 1;
+            });
+
+        // Success! User has access
+        availableMailboxes.Add((
+            potentialMailbox.DisplayName ?? "Unknown",
+            potentialMailbox.Mail ?? "",
+            "Shared"
+        ));
     }
-    else if (selectedIndex > 0 && selectedIndex <= availableMailboxes.Count)
+    catch
     {
-        selectedMailboxEmail = availableMailboxes[selectedIndex - 1].Email;
-        selectedMailboxName = availableMailboxes[selectedIndex - 1].DisplayName;
-    }
-    else
-    {
-        Console.WriteLine("Invalid selection, using primary mailbox.");
-        selectedMailboxEmail = user?.Mail ?? user?.UserPrincipalName ?? "";
-        selectedMailboxName = user?.DisplayName ?? "Primary";
+        // No access, skip
     }
 }
-
-Console.WriteLine($"\nSelected mailbox: {selectedMailboxName} ({selectedMailboxEmail})");
 ```
 
-### Step 5.4: Update API Calls to Use Selected Mailbox
+**Key Learning**:
+- Shared mailboxes often have `accountEnabled = false`
+- Must test access to verify permissions
+- Some mailboxes may have `accountEnabled = true` (delegated)
 
-**Code Changes**:
+### Step 5.3: Implement Command-Line Arguments
 
-**Before**:
+**What you'll learn**: Argument parsing, automation, non-interactive mode
+
+**Add Argument Parser**:
 ```csharp
-var folders = await graphClient.Me.MailFolders.GetAsync();
-var messages = await graphClient.Me.MailFolders["Inbox"].Messages.GetAsync();
+// Parse command-line arguments
+string? argMailbox = null;
+string? argFolder = null;
+
+for (int i = 0; i < args.Length; i++)
+{
+    if ((args[i] == "--mailbox" || args[i] == "-m") && i + 1 < args.Length)
+    {
+        argMailbox = args[i + 1];
+        i++; // Skip next argument
+    }
+    else if ((args[i] == "--folder" || args[i] == "-f") && i + 1 < args.Length)
+    {
+        argFolder = args[i + 1];
+        i++; // Skip next argument
+    }
+    else if (args[i] == "--help" || args[i] == "-h")
+    {
+        Console.WriteLine("Usage: OutlookExporter [options]");
+        Console.WriteLine("\nOptions:");
+        Console.WriteLine("  -m, --mailbox <email>    Specify mailbox email address");
+        Console.WriteLine("  -f, --folder <name>      Specify folder name to export");
+        Console.WriteLine("  -h, --help               Show this help message");
+        Console.WriteLine("\nExamples:");
+        Console.WriteLine("  OutlookExporter --mailbox user@example.com --folder \"Sent Items\"");
+        Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox");
+        return;
+    }
+}
 ```
 
-**After**:
+**Update Discovery Logic**:
 ```csharp
-var folders = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync();
-var messages = await graphClient.Users[selectedMailboxEmail].MailFolders["Inbox"].Messages.GetAsync();
+// Only discover mailboxes if not specified via command-line argument
+if (argMailbox == null)
+{
+    // ... [mailbox discovery logic]
+}
+else
+{
+    Console.WriteLine("\nSkipping mailbox discovery (mailbox specified via command-line).");
+    selectedMailboxEmail = argMailbox;
+}
 ```
-
-**Why This Works**:
-- `.Users[email]` can be used for any mailbox user has access to
-- Includes own mailbox (user's email)
-- Includes shared mailboxes (with permissions)
-- Same API structure for all mailboxes
 
 **Testing**:
-1. Test with primary mailbox (should work as before)
-2. Test with shared mailbox email (if available)
-3. Test with invalid email (should get permission error)
+```bash
+# Interactive mode
+dotnet run
+
+# Automated mode
+dotnet run -- -m "shared@company.com" -f "Sent Items"
+```
+
+**Benefits**:
+- ✅ Scriptable and automatable
+- ✅ No user interaction needed
+- ✅ Faster execution (skips discovery)
+- ✅ Can be scheduled via Task Scheduler
+
+### Step 5.4: Implement Recursive Folder Discovery
+
+**What you'll learn**: Recursive async functions, ChildFolders endpoint, folder hierarchies
+
+**Problem**: Default folder listing only shows top-level folders (e.g., 10 folders)
+
+**Solution**: Recursively discover all subfolders
+
+**Recursive Discovery Code**:
+```csharp
+var allFolders = new List<(string Id, string Name, string Path, int Total, int Unread)>();
+
+// Get top-level folders
+var topLevelFolders = await graphClient.Users[selectedMailboxEmail]
+    .MailFolders
+    .GetAsync();
+
+if (topLevelFolders?.Value != null)
+{
+    foreach (var folder in topLevelFolders.Value)
+    {
+        allFolders.Add((
+            folder.Id ?? "",
+            folder.DisplayName ?? "",
+            folder.DisplayName ?? "",
+            folder.TotalItemCount ?? 0,
+            folder.UnreadItemCount ?? 0
+        ));
+
+        // Recursively get child folders
+        if (folder.ChildFolderCount > 0)
+        {
+            await GetFoldersRecursive(folder.Id ?? "", folder.DisplayName ?? "");
+        }
+    }
+}
+
+async Task GetFoldersRecursive(string parentFolderId, string parentPath)
+{
+    var childFolders = await graphClient.Users[selectedMailboxEmail]
+        .MailFolders[parentFolderId]
+        .ChildFolders
+        .GetAsync();
+
+    if (childFolders?.Value != null)
+    {
+        foreach (var folder in childFolders.Value)
+        {
+            var folderPath = string.IsNullOrEmpty(parentPath)
+                ? folder.DisplayName ?? ""
+                : $"{parentPath}/{folder.DisplayName}";
+
+            allFolders.Add((
+                folder.Id ?? "",
+                folder.DisplayName ?? "",
+                folderPath,
+                folder.TotalItemCount ?? 0,
+                folder.UnreadItemCount ?? 0
+            ));
+
+            // Recursively get child folders
+            if (folder.ChildFolderCount > 0)
+            {
+                await GetFoldersRecursive(folder.Id ?? "", folderPath);
+            }
+        }
+    }
+}
+```
+
+**Result**: Discovers ALL folders, including deeply nested ones (e.g., `Inbox/01-CLIENTES/A/Aber`)
+
+**Testing**:
+- Look for nested folder in output
+- Verify folder paths show hierarchy
+- Count should increase significantly (e.g., 10 → 308 folders)
+
+### Step 5.5: Improve Error Handling
+
+**What you'll learn**: User feedback, error messages, program exit
+
+**Problem**: When folder not found, app defaults to Inbox (confusing)
+
+**Solution**: Exit with helpful error message
+
+**Error Handling Code**:
+```csharp
+var selectedFolder = allFolders.FirstOrDefault(f =>
+    f.Name.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
+    f.Path.Equals(argFolder, StringComparison.OrdinalIgnoreCase)
+);
+
+if (selectedFolder.Id != null)
+{
+    Console.WriteLine($"✓ Found folder: {selectedFolder.Path}");
+    selectedFolderId = selectedFolder.Id;
+    selectedFolderName = selectedFolder.Name;
+}
+else
+{
+    Console.WriteLine($"✗ Error: Folder '{argFolder}' not found.");
+    Console.WriteLine("\nAvailable folders:");
+    foreach (var folder in allFolders.Take(10))
+    {
+        Console.WriteLine($"  - {folder.Path}");
+    }
+    if (allFolders.Count > 10)
+    {
+        Console.WriteLine($"  ... and {allFolders.Count - 10} more folders");
+    }
+    Console.WriteLine("\nPlease specify a valid folder name or path.");
+    return;  // Exit program
+}
+```
+
+**Benefits**:
+- ✅ Clear error message
+- ✅ Shows available folders
+- ✅ Prevents incorrect exports
+- ✅ Better user experience
+
+### Step 5.6: Performance Optimization
+
+**What you'll learn**: Conditional execution, performance tuning
+
+**Problem**: Mailbox discovery takes 30-60 seconds (tests 47 mailboxes)
+
+**Solution**: Skip discovery when mailbox specified via args
+
+**Already Implemented in Step 5.3**:
+```csharp
+if (argMailbox == null)
+{
+    // Discovery logic here (30-60 seconds)
+}
+else
+{
+    // Skip discovery (instant)
+}
+```
+
+**Performance Comparison**:
+- Interactive mode: 30-60 seconds (discovers all mailboxes)
+- Automated mode with args: Instant (skips discovery)
+
+**Testing**:
+```bash
+# Slow (with discovery)
+dotnet run
+
+# Fast (skip discovery)
+dotnet run -- -m "user@example.com" -f "Inbox"
+```
 
 ---
 

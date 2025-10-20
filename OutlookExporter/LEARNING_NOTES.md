@@ -1637,6 +1637,376 @@ Created `ADMIN_SETUP_GUIDE.md` to help administrators:
 
 ---
 
+## Advanced Features & Optimizations
+
+### Q: How do you discover shared mailboxes automatically?
+
+**A: Query Azure AD for Disabled Accounts and Test Access**
+
+**The Challenge:**
+- Users may have access to multiple shared mailboxes
+- No direct API to list "all mailboxes I can access"
+- Must query and test each potential mailbox
+
+**Three Approaches:**
+
+**Approach 1: Query Disabled Accounts (Implemented)**
+```csharp
+// Add User.Read.All permission to scopes
+var scopes = new[] { "User.Read", "User.Read.All", "Mail.Read", ... };
+
+// Query for disabled accounts (traditional shared mailboxes)
+var users = await graphClient.Users
+    .GetAsync(requestConfig =>
+    {
+        requestConfig.QueryParameters.Filter = "accountEnabled eq false";
+        requestConfig.QueryParameters.Select = new[] { "displayName", "mail", "userPrincipalName" };
+    });
+
+// Test access to each potential mailbox
+foreach (var potentialMailbox in users.Value)
+{
+    try
+    {
+        await graphClient.Users[potentialMailbox.Mail]
+            .MailFolders
+            .GetAsync(requestConfig =>
+            {
+                requestConfig.QueryParameters.Top = 1;
+            });
+
+        // Success! User has access
+        availableMailboxes.Add((
+            potentialMailbox.DisplayName ?? "Unknown",
+            potentialMailbox.Mail ?? "",
+            "Shared"
+        ));
+    }
+    catch
+    {
+        // No access, skip
+    }
+}
+```
+
+**Why This Works:**
+- Traditional shared mailboxes have `accountEnabled = false`
+- Exchange creates user objects for shared mailboxes
+- Testing access verifies actual permissions
+
+**Approach 2: Admin-Level Discovery**
+- Requires Application permissions (Mail.Read.All)
+- Can list all mailboxes in tenant
+- Needs admin consent
+- Not suitable for delegated scenarios
+
+**Approach 3: Hardcode Known Mailboxes**
+```csharp
+// Add known mailboxes that don't appear in discovery
+availableMailboxes.Add(("Archive Mailbox", "archive@company.com", "Delegated"));
+```
+
+**Key Learning:**
+- `accountEnabled = false` indicates traditional shared mailboxes
+- Some delegated mailboxes have `accountEnabled = true` (won't appear in query)
+- Must test access to verify permissions (403 errors indicate no access)
+- Discovery can be slow (testing 47 mailboxes takes 30-60 seconds)
+
+**Permission Required:**
+- `User.Read.All` - To query all users in the organization
+
+### Q: How do you implement command-line arguments for automation?
+
+**A: Manual Argument Parsing with Conditional Logic**
+
+**The Goal:**
+- Enable scriptable, non-interactive execution
+- Support scheduled tasks (Windows Task Scheduler)
+- Skip user prompts when arguments provided
+
+**Implementation:**
+
+**1. Parse Arguments:**
+```csharp
+string? argMailbox = null;
+string? argFolder = null;
+
+for (int i = 0; i < args.Length; i++)
+{
+    if ((args[i] == "--mailbox" || args[i] == "-m") && i + 1 < args.Length)
+    {
+        argMailbox = args[i + 1];
+        i++; // Skip next argument
+    }
+    else if ((args[i] == "--folder" || args[i] == "-f") && i + 1 < args.Length)
+    {
+        argFolder = args[i + 1];
+        i++; // Skip next argument
+    }
+    else if (args[i] == "--help" || args[i] == "-h")
+    {
+        ShowHelp();
+        return;
+    }
+}
+```
+
+**2. Conditional Execution:**
+```csharp
+// Skip interactive mailbox selection if specified
+if (argMailbox != null)
+{
+    selectedMailboxEmail = argMailbox;
+    Console.WriteLine($"\nUsing mailbox from arguments: {argMailbox}");
+}
+else
+{
+    // Interactive mailbox selection...
+}
+
+// Skip interactive folder selection if specified
+if (argFolder != null)
+{
+    // Find folder by name or path
+    var selectedFolder = allFolders.FirstOrDefault(f =>
+        f.Name.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
+        f.Path.Equals(argFolder, StringComparison.OrdinalIgnoreCase)
+    );
+
+    if (selectedFolder.Id == null)
+    {
+        // Error: Folder not found, exit
+        Console.WriteLine($"✗ Error: Folder '{argFolder}' not found.");
+        return;
+    }
+}
+else
+{
+    // Interactive folder selection...
+}
+```
+
+**Usage Examples:**
+```bash
+# Interactive mode (prompts for mailbox and folder)
+dotnet run
+
+# Specify mailbox only (prompts for folder)
+dotnet run -- -m "shared@company.com"
+
+# Specify both (fully automated)
+dotnet run -- -m "shared@company.com" -f "Sent Items"
+
+# Help
+dotnet run -- --help
+```
+
+**Benefits:**
+- ✅ Scriptable and automatable
+- ✅ Can be scheduled via Task Scheduler
+- ✅ No user interaction needed when args provided
+- ✅ Faster execution (skips discovery)
+- ✅ Backward compatible (works without args)
+
+**Key Decisions:**
+- Support both short (`-m`) and long (`--mailbox`) forms
+- Increment `i` after reading argument value to skip it
+- Exit with error if folder not found (don't default to Inbox)
+- Show helpful error messages with available options
+
+### Q: How do you discover nested/child folders recursively?
+
+**A: Use ChildFolders Endpoint with Recursive Async Function**
+
+**The Problem:**
+- Top-level `MailFolders` endpoint only returns root folders
+- Many mailboxes have deeply nested folder structures
+- Example: `Inbox/01-CLIENTES/A/Aber/Projetos`
+
+**The Solution:**
+
+**1. Data Structure to Track Hierarchy:**
+```csharp
+var allFolders = new List<(string Id, string Name, string Path, int Total, int Unread)>();
+```
+
+**2. Get Top-Level Folders:**
+```csharp
+var topLevelFolders = await graphClient.Users[selectedMailboxEmail]
+    .MailFolders
+    .GetAsync();
+
+foreach (var folder in topLevelFolders.Value)
+{
+    allFolders.Add((
+        folder.Id ?? "",
+        folder.DisplayName ?? "",
+        folder.DisplayName ?? "",  // Path is just name at top level
+        folder.TotalItemCount ?? 0,
+        folder.UnreadItemCount ?? 0
+    ));
+
+    // Recursively get child folders
+    if (folder.ChildFolderCount > 0)
+    {
+        await GetFoldersRecursive(folder.Id ?? "", folder.DisplayName ?? "");
+    }
+}
+```
+
+**3. Recursive Function:**
+```csharp
+async Task GetFoldersRecursive(string parentFolderId, string parentPath)
+{
+    var childFolders = await graphClient.Users[selectedMailboxEmail]
+        .MailFolders[parentFolderId]
+        .ChildFolders  // ← Key endpoint!
+        .GetAsync();
+
+    if (childFolders?.Value != null)
+    {
+        foreach (var folder in childFolders.Value)
+        {
+            // Build hierarchical path
+            var folderPath = string.IsNullOrEmpty(parentPath)
+                ? folder.DisplayName ?? ""
+                : $"{parentPath}/{folder.DisplayName}";
+
+            allFolders.Add((
+                folder.Id ?? "",
+                folder.DisplayName ?? "",
+                folderPath,  // ← Full path: "Inbox/Clients/A/Aber"
+                folder.TotalItemCount ?? 0,
+                folder.UnreadItemCount ?? 0
+            ));
+
+            // Recurse into child folders
+            if (folder.ChildFolderCount > 0)
+            {
+                await GetFoldersRecursive(folder.Id ?? "", folderPath);
+            }
+        }
+    }
+}
+```
+
+**How It Works:**
+
+**Call Stack Example:**
+```
+GetFoldersRecursive("inbox-id", "Inbox")
+  ├─ Finds "Clients" folder
+  ├─ Adds "Inbox/Clients" to list
+  └─ GetFoldersRecursive("clients-id", "Inbox/Clients")
+      ├─ Finds "A" folder
+      ├─ Adds "Inbox/Clients/A" to list
+      └─ GetFoldersRecursive("a-id", "Inbox/Clients/A")
+          ├─ Finds "Aber" folder
+          ├─ Adds "Inbox/Clients/A/Aber" to list
+          └─ (no more children)
+```
+
+**Performance:**
+- Each folder requires one API call
+- 308 folders = 308 API calls (takes a few seconds)
+- Could be optimized with batch requests
+- Acceptable for most mailboxes
+
+**Results:**
+- Before: 10 folders discovered
+- After: 308 folders discovered (30x increase!)
+- Hierarchical paths make folder selection easier
+
+**Key Learning:**
+- `.MailFolders[id].ChildFolders` endpoint is crucial
+- `ChildFolderCount` property indicates if recursion needed
+- Build full path by concatenating parent path + folder name
+- Async recursive functions work naturally in C#
+
+### Q: How do you optimize performance for automated scenarios?
+
+**A: Conditional Execution Based on Arguments**
+
+**The Problem:**
+- Mailbox discovery tests 47 potential mailboxes (30-60 seconds)
+- When using command-line args, discovery is unnecessary
+- Wasted time in automated/scheduled scenarios
+
+**The Solution:**
+
+**Conditional Discovery:**
+```csharp
+// Only discover mailboxes if not specified via command-line argument
+if (argMailbox == null)
+{
+    Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
+    // ... [30-60 seconds of discovery]
+}
+else
+{
+    Console.WriteLine("\nSkipping mailbox discovery (mailbox specified via command-line).");
+    selectedMailboxEmail = argMailbox;
+}
+```
+
+**Performance Comparison:**
+
+| Mode | Discovery | Folder Discovery | Total Time |
+|------|-----------|------------------|------------|
+| Interactive (no args) | 30-60s | 2-3s | 32-63s |
+| Automated (with args) | 0s (skipped) | 2-3s | 2-3s |
+| **Speedup** | **∞** | **1x** | **10-20x faster** |
+
+**When to Skip:**
+- ✅ Mailbox specified via `--mailbox` argument
+- ✅ Running in scheduled task
+- ✅ Scripted/automated execution
+
+**When to Run:**
+- ✅ Interactive mode (user needs to choose)
+- ✅ First-time setup
+- ✅ Discovery of available mailboxes
+
+**Additional Optimizations:**
+
+**1. Limit Query Results:**
+```csharp
+requestConfig.QueryParameters.Top = 1;  // Only need 1 item to test access
+```
+
+**2. Parallel Discovery (Advanced):**
+```csharp
+// Test multiple mailboxes concurrently
+var tasks = potentialMailboxes.Select(async mailbox =>
+{
+    try
+    {
+        await graphClient.Users[mailbox.Mail].MailFolders.GetAsync();
+        return mailbox;
+    }
+    catch
+    {
+        return null;
+    }
+});
+
+var results = await Task.WhenAll(tasks);
+var accessible = results.Where(r => r != null).ToList();
+```
+
+**3. Caching (Future Enhancement):**
+- Cache discovered mailboxes locally
+- Refresh periodically
+- Reduces discovery frequency
+
+**Key Learning:**
+- Optimize for common use cases (automation)
+- Conditional execution based on context
+- Performance matters for scheduled tasks
+- Interactive vs automated modes have different needs
+
+---
+
 ## Key Takeaways
 
 ### Azure AD & Authentication
@@ -1656,6 +2026,12 @@ Created `ADMIN_SETUP_GUIDE.md` to help administrators:
    - User-friendly (browser-based sign-in)
    - Secure (no password handling)
 
+4. **Permissions Evolve with Features**
+   - Started with: User.Read, Mail.Read, Mail.ReadBasic, MailboxSettings.Read
+   - Added: User.Read.All (for mailbox discovery)
+   - Added: Mail.Read.Shared (for shared mailbox access)
+   - Request only what you need, add as features require
+
 ### Microsoft Graph API
 
 1. **Unified and Consistent**
@@ -1671,22 +2047,41 @@ Created `ADMIN_SETUP_GUIDE.md` to help administrators:
    - Access any mailbox with permissions
    - Same API structure
 
+4. **ChildFolders Endpoint for Nested Discovery**
+   - `.MailFolders[id].ChildFolders` reveals nested structure
+   - Requires recursive traversal
+   - Essential for complex folder hierarchies
+
+5. **Filter and Select Optimize Queries**
+   - Use `$filter` to reduce data returned
+   - Use `$select` to get only needed fields
+   - Use `$top` to limit results
+   - Reduces network traffic and improves performance
+
 ### C# Patterns
 
 1. **Async/Await Everywhere**
    - All Graph API calls are async
    - Don't block threads
    - Propagate async up the call stack
+   - Recursive async functions work naturally
 
 2. **LINQ for Transformations**
    - Clean, readable data shaping
    - `.Select()` for projections
    - Anonymous types for temporary data
+   - `.FirstOrDefault()` for safe searching
 
 3. **Configuration Over Hardcoding**
    - Never hardcode credentials
    - Use .gitignore
    - Provide example templates
+
+4. **Tuple Types for Simple Data Structures**
+   - `(string Id, string Name, string Path)` instead of classes
+   - Quick and type-safe
+   - Good for internal use
+   - Named tuple elements improve readability
 
 ### Development Process
 
@@ -1705,6 +2100,18 @@ Created `ADMIN_SETUP_GUIDE.md` to help administrators:
    - Security considerations
    - Multi-environment configuration
 
+4. **Optimize for Common Use Cases**
+   - Interactive mode for exploration
+   - Automated mode for production
+   - Command-line arguments for scripting
+   - Performance matters for scheduled tasks
+
+5. **User Experience Matters**
+   - Clear error messages
+   - Show available options when errors occur
+   - Don't default silently (exit with error instead)
+   - Provide help documentation (`--help`)
+
 ---
 
 ## What's Next?
@@ -1717,16 +2124,25 @@ Created `ADMIN_SETUP_GUIDE.md` to help administrators:
 ✅ C# async/await and LINQ
 ✅ Secure configuration management
 ✅ Common errors and solutions
+✅ Shared mailbox discovery
+✅ Recursive folder discovery
+✅ Command-line automation
+✅ Performance optimization
 
 **Next challenges:**
-- Build other Microsoft 365 integrations
-- Implement pagination for large datasets
-- Add advanced filtering and searching
-- Create scheduled/automated exports
+- Build other Microsoft 365 integrations (Calendar, Contacts, OneDrive)
+- Implement pagination for large datasets (thousands of emails)
+- Add advanced filtering and searching (date ranges, keywords)
+- Create scheduled/automated exports with Windows Task Scheduler
+- Add attachment download support
+- Implement incremental exports (only new emails)
 - Build UI applications (WPF, WinForms, Blazor)
+- Add email notifications on export completion
+- Export to multiple formats (CSV, Excel, EML files)
 
 ---
 
 *Document created: October 17, 2025*
+*Last updated: October 20, 2025*
 *Project: Outlook Email Exporter*
 *Learning captured from real development experience*
