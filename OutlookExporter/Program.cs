@@ -23,7 +23,7 @@ try
     Console.WriteLine("Initializing authentication...");
 
     // Create DeviceCodeCredential for authentication
-    var scopes = new[] { "User.Read", "Mail.Read", "Mail.ReadBasic", "Mail.Read.Shared", "MailboxSettings.Read" };
+    var scopes = new[] { "User.Read", "User.Read.All", "Mail.Read", "Mail.ReadBasic", "Mail.Read.Shared", "MailboxSettings.Read" };
 
     var options = new DeviceCodeCredentialOptions
     {
@@ -64,33 +64,67 @@ try
     Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
     try
     {
-        // Note: Microsoft Graph API with delegated permissions has limited shared mailbox discovery
-        // The most reliable methods require admin permissions (User.Read.All, Mail.Read.All)
+        // Query Azure AD for shared mailboxes
+        // Shared mailboxes typically have accountEnabled = false and a mailbox
+        Console.WriteLine("Querying Azure AD for shared mailboxes...");
 
-        // Try to detect from mailbox settings
-        var mailboxSettings = await graphClient.Me.MailboxSettings.GetAsync();
-
-        // Check for delegated mailboxes in user's mailbox settings
-        // This is limited but might provide some information
-        if (mailboxSettings?.DelegateMeetingMessageDeliveryOptions != null)
+        // Get all users with mailboxes that have accountEnabled = false (typical for shared mailboxes)
+        var usersResponse = await graphClient.Users.GetAsync(requestConfig =>
         {
-            Console.WriteLine("Found delegation settings in mailbox configuration.");
+            requestConfig.QueryParameters.Filter = "accountEnabled eq false";
+            requestConfig.QueryParameters.Select = new[] { "displayName", "mail", "userPrincipalName", "id" };
+            requestConfig.QueryParameters.Top = 100; // Limit to avoid large queries
+        });
+
+        var sharedMailboxCount = 0;
+
+        if (usersResponse?.Value != null && usersResponse.Value.Count > 0)
+        {
+            Console.WriteLine($"Found {usersResponse.Value.Count} potential shared mailbox(es). Testing access...\n");
+
+            foreach (var potentialSharedMailbox in usersResponse.Value)
+            {
+                var mailboxEmail = potentialSharedMailbox.Mail ?? potentialSharedMailbox.UserPrincipalName;
+
+                if (string.IsNullOrEmpty(mailboxEmail))
+                {
+                    continue;
+                }
+
+                // Test if current user has access to this shared mailbox
+                try
+                {
+                    Console.Write($"  Testing access to: {potentialSharedMailbox.DisplayName} ({mailboxEmail})... ");
+
+                    // Try to get the inbox to verify access
+                    var testAccess = await graphClient.Users[mailboxEmail].MailFolders.GetAsync(requestConfig =>
+                    {
+                        requestConfig.QueryParameters.Top = 1;
+                    });
+
+                    // If we get here, we have access
+                    Console.WriteLine("✓ Access granted");
+                    availableMailboxes.Add((potentialSharedMailbox.DisplayName ?? mailboxEmail, mailboxEmail, "Shared"));
+                    sharedMailboxCount++;
+                }
+                catch (Exception)
+                {
+                    // No access to this mailbox - silently skip
+                    Console.WriteLine("✗ No access");
+                }
+            }
+
+            Console.WriteLine($"\nDiscovered {sharedMailboxCount} accessible shared mailbox(es).");
         }
-
-        // Alternative approach: Guide user to find their shared mailboxes
-        Console.WriteLine("\nTo find your shared mailbox email addresses:");
-        Console.WriteLine("  1. Open Outlook (desktop or web)");
-        Console.WriteLine("  2. Look for additional mailboxes in your folder list");
-        Console.WriteLine("  3. Right-click the shared mailbox → Properties → Email address");
-        Console.WriteLine("  4. Or ask your IT administrator for the shared mailbox addresses");
-
-        Console.WriteLine("\nNote: Automatic discovery requires admin-level Graph permissions.");
-        Console.WriteLine("      You can manually enter shared mailbox addresses below.");
+        else
+        {
+            Console.WriteLine("No shared mailboxes found in Azure AD query.");
+        }
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"Note: Limited mailbox discovery: {ex.Message}");
-        Console.WriteLine("      You can still manually enter shared mailbox addresses below.");
+        Console.WriteLine($"Error during shared mailbox discovery: {ex.Message}");
+        Console.WriteLine("You can still manually enter shared mailbox addresses below.");
     }
 
     Console.WriteLine($"\nFound {availableMailboxes.Count} mailbox(es):");
