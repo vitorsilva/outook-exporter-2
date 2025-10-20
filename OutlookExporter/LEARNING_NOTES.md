@@ -2007,6 +2007,562 @@ var accessible = results.Where(r => r != null).ToList();
 
 ---
 
+## Rate Limits & Throttling
+
+### Q: What are the Microsoft Graph API rate limits for Outlook/Mail endpoints?
+
+**A: 10,000 Requests Per 10 Minutes Per App Per Mailbox**
+
+**The Limits (As of 2025):**
+
+| Limit Type | Value | Scope |
+|------------|-------|-------|
+| **Request Rate** | 10,000 requests per 10 minutes | Per app + per mailbox combination |
+| **Concurrent Requests** | 4 requests | Per app + per mailbox combination |
+| **Upload Size** | 150 MB within 5 minutes | Per app + per mailbox combination |
+
+**Important 2025 Change:**
+- **September 30, 2025**: Per-app/per-user per-tenant limit reduced to **half** of total tenant limit
+- Purpose: Prevent single user/app from consuming entire quota
+
+**What Counts Toward Limit:**
+- ✅ All Outlook-related API calls (mail, folders, messages, settings)
+- ❌ Non-Outlook resources (OneDrive, Teams, SharePoint) - separate limits
+
+**Scope of Limits:**
+- Each app ID + mailbox combination has its own quota
+- Accessing User A's mailbox doesn't affect quota for User B
+- Multiple apps accessing same mailbox don't share quota
+
+### Q: What happens when you exceed rate limits?
+
+**A: HTTP 429 Error with Retry-After Header**
+
+**Throttling Response:**
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 120
+
+{
+  "error": {
+    "code": "TooManyRequests",
+    "message": "The request has been throttled. Please try again later."
+  }
+}
+```
+
+**Key Elements:**
+1. **Status Code**: `429 Too Many Requests`
+2. **Retry-After Header**: Seconds to wait before retrying
+3. **Error Code**: `TooManyRequests` in response body
+
+**What Happens:**
+- Request fails immediately
+- All subsequent requests fail until limit resets
+- Must wait for specified time (or until 10-minute window expires)
+- Requests accrue even when throttled (don't spam!)
+
+### Q: How many requests does this application make?
+
+**A: ~357 Requests in Interactive Mode (3.57% of Limit)**
+
+**Request Count Analysis:**
+
+**Interactive Mode (Worst Case):**
+```
+Operation                        Requests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Authentication                          1
+Get user profile                        1
+Discover shared mailboxes              47  (test access to each)
+Discover folders (recursive)          308  (depends on folder count)
+Export emails                     Variable  (depends on folder size)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total baseline:                      ~357
+
+Percentage of limit: 3.57% ✅
+```
+
+**Automated Mode (With Args):**
+```
+Operation                        Requests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Authentication                          1
+Discover folders (recursive)          308
+Export emails                     Variable
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total baseline:                      ~309
+
+Percentage of limit: 3.09% ✅
+```
+
+**When You Might Approach Limits:**
+
+**Scenario 1: Large Folder Export**
+```
+308 folders discovered
++ 1,000 emails @ 10 per page = 100 requests
++ 100 folders × 100 requests = 10,000 requests
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total: 10,408 requests ⚠️ EXCEEDS LIMIT
+```
+
+**Scenario 2: Multiple Exports in Sequence**
+```
+Export 1: 357 requests
+Export 2: 357 requests
+Export 3: 357 requests
+...
+Export 28: Would hit limit
+```
+
+**Scenario 3: Large Single Folder**
+```
+Folder with 10,000 emails
+Default pagination: 10 per page
+Requests needed: 1,000 requests ⚠️
+```
+
+**Key Insight**: Current app is safe for normal use, but features like large exports or batch processing need throttling protection.
+
+### Q: What are the best practices to avoid throttling?
+
+**A: 7 Key Strategies**
+
+#### 1. Use $top Parameter for Pagination
+
+**Problem**: Default pagination retrieves 10-25 items per page
+
+**Solution**: Increase page size to maximum (1,000)
+
+```csharp
+// ❌ Bad: Default pagination
+var messages = await graphClient.Users[email].Messages.GetAsync();
+// 1,000 emails = 100 requests (10 per page)
+
+// ✅ Good: Maximum pagination
+var messages = await graphClient.Users[email].Messages.GetAsync(config =>
+{
+    config.QueryParameters.Top = 1000;  // Maximum allowed
+});
+// 1,000 emails = 1 request
+
+// Impact: 100x reduction in requests! 🚀
+```
+
+**When to Use:**
+- Always when retrieving lists (messages, folders, users)
+- Especially for large datasets
+- Default in your app should be 1000
+
+#### 2. Implement Retry Logic with Exponential Backoff
+
+**Problem**: Throttling errors cause app to crash
+
+**Solution**: Automatically retry with increasing delays
+
+```csharp
+private async Task<T> ExecuteWithRetryAsync<T>(
+    Func<Task<T>> operation,
+    int maxRetries = 3)
+{
+    for (int attempt = 0; attempt <= maxRetries; attempt++)
+    {
+        try
+        {
+            return await operation();
+        }
+        catch (ServiceException ex)
+            when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            if (attempt == maxRetries)
+                throw;
+
+            // Honor Retry-After header, or use exponential backoff
+            var retryAfter = ex.ResponseHeaders?.RetryAfter?.Delta
+                ?? TimeSpan.FromSeconds(Math.Pow(2, attempt));
+
+            Console.WriteLine(
+                $"⚠️  Throttled. Retry {attempt + 1}/{maxRetries} " +
+                $"after {retryAfter.TotalSeconds}s..."
+            );
+
+            await Task.Delay(retryAfter);
+        }
+    }
+
+    throw new Exception("Max retries exceeded");
+}
+
+// Usage:
+var messages = await ExecuteWithRetryAsync(() =>
+    graphClient.Users[email].Messages.GetAsync()
+);
+```
+
+**Exponential Backoff Pattern:**
+- Attempt 1 fails → Wait 2 seconds
+- Attempt 2 fails → Wait 4 seconds
+- Attempt 3 fails → Wait 8 seconds
+- Gives service time to recover
+
+**Why This Works:**
+- Respects `Retry-After` header from server
+- Falls back to exponential backoff if header missing
+- Prevents thundering herd problem
+- Allows temporary spikes to settle
+
+#### 3. Use Batch Requests
+
+**Problem**: Multiple similar operations make separate requests
+
+**Solution**: Combine into single batch request (up to 20 operations)
+
+```csharp
+// ❌ Bad: 3 separate requests
+var inbox = await graphClient.Users[email]
+    .MailFolders["Inbox"].GetAsync();
+var sent = await graphClient.Users[email]
+    .MailFolders["SentItems"].GetAsync();
+var drafts = await graphClient.Users[email]
+    .MailFolders["Drafts"].GetAsync();
+
+// ✅ Good: 1 batch request
+var batchContent = new BatchRequestContent();
+
+var inboxReq = graphClient.Users[email]
+    .MailFolders["Inbox"].ToGetRequestInformation();
+var sentReq = graphClient.Users[email]
+    .MailFolders["SentItems"].ToGetRequestInformation();
+var draftsReq = graphClient.Users[email]
+    .MailFolders["Drafts"].ToGetRequestInformation();
+
+var inboxId = batchContent.AddBatchRequestStep(inboxReq);
+var sentId = batchContent.AddBatchRequestStep(sentReq);
+var draftsId = batchContent.AddBatchRequestStep(draftsReq);
+
+var batchResponse = await graphClient.Batch.PostAsync(batchContent);
+
+var inbox = await batchResponse.GetResponseByIdAsync<MailFolder>(inboxId);
+var sent = await batchResponse.GetResponseByIdAsync<MailFolder>(sentId);
+var drafts = await batchResponse.GetResponseByIdAsync<MailFolder>(draftsId);
+```
+
+**Batch Limitations:**
+- Maximum 20 requests per batch
+- Only 4 requests processed concurrently from batch
+- All requests still count toward rate limit
+- Reduces network overhead, not request count
+
+**Best Use Cases:**
+- Fetching multiple specific folders
+- Updating multiple items
+- Mixed GET/POST operations
+
+#### 4. Track Request Count
+
+**Problem**: No visibility into how close you are to limit
+
+**Solution**: Monitor request count and proactively throttle
+
+```csharp
+public class RequestTracker
+{
+    private int _requestCount = 0;
+    private DateTime _windowStart = DateTime.UtcNow;
+    private const int LIMIT = 10000;
+    private const int WARNING_THRESHOLD = 9000; // 90%
+    private static readonly TimeSpan WINDOW = TimeSpan.FromMinutes(10);
+
+    public async Task<T> TrackRequestAsync<T>(Func<Task<T>> operation)
+    {
+        // Reset counter if window expired
+        if (DateTime.UtcNow - _windowStart > WINDOW)
+        {
+            Console.WriteLine("✅ Rate limit window reset");
+            _requestCount = 0;
+            _windowStart = DateTime.UtcNow;
+        }
+
+        // Warn if approaching limit
+        if (_requestCount >= WARNING_THRESHOLD)
+        {
+            var percentage = (_requestCount * 100.0) / LIMIT;
+            Console.WriteLine(
+                $"⚠️  WARNING: {percentage:F1}% of rate limit used " +
+                $"({_requestCount}/{LIMIT})"
+            );
+
+            // Proactively wait if at 95%
+            if (_requestCount >= LIMIT * 0.95)
+            {
+                var waitTime = WINDOW - (DateTime.UtcNow - _windowStart);
+                Console.WriteLine(
+                    $"⏸️  Pausing for {waitTime.TotalSeconds:F0}s " +
+                    $"to avoid hitting rate limit..."
+                );
+                await Task.Delay(waitTime);
+                _requestCount = 0;
+                _windowStart = DateTime.UtcNow;
+            }
+        }
+
+        _requestCount++;
+
+        // Show progress every 100 requests
+        if (_requestCount % 100 == 0)
+        {
+            var percentage = (_requestCount * 100.0) / LIMIT;
+            Console.WriteLine(
+                $"📊 API Usage: {_requestCount}/{LIMIT} " +
+                $"({percentage:F1}%)"
+            );
+        }
+
+        return await operation();
+    }
+
+    public void Reset()
+    {
+        _requestCount = 0;
+        _windowStart = DateTime.UtcNow;
+    }
+}
+```
+
+**Benefits:**
+- Real-time visibility into API usage
+- Proactive throttling before hitting limit
+- Helpful for debugging and optimization
+- User feedback on progress
+
+#### 5. Cache Frequently Accessed Data
+
+**Problem**: Repeatedly fetching same data wastes requests
+
+**Solution**: Store and reuse data that doesn't change often
+
+```csharp
+public class MailboxCache
+{
+    private List<MailboxInfo>? _cached;
+    private DateTime _expiry = DateTime.MinValue;
+    private readonly TimeSpan _duration = TimeSpan.FromHours(1);
+
+    public async Task<List<MailboxInfo>> GetMailboxesAsync(
+        Func<Task<List<MailboxInfo>>> fetchFunc)
+    {
+        // Return cached if still valid
+        if (_cached != null && DateTime.UtcNow < _expiry)
+        {
+            Console.WriteLine("📦 Using cached mailboxes (0 requests)");
+            return _cached;
+        }
+
+        // Fetch fresh data
+        Console.WriteLine("🌐 Fetching mailboxes from API...");
+        _cached = await fetchFunc();
+        _expiry = DateTime.UtcNow.Add(_duration);
+
+        return _cached;
+    }
+
+    public void Invalidate()
+    {
+        _cached = null;
+        _expiry = DateTime.MinValue;
+    }
+}
+```
+
+**What to Cache:**
+- ✅ **Discovered shared mailboxes** (rarely change)
+  - Cache duration: 1 hour
+  - Saves 47 requests per run
+- ✅ **Folder structures** (relatively static)
+  - Cache duration: 30 minutes
+  - Saves 308 requests per run
+- ❌ **Email messages** (change frequently)
+- ❌ **Unread counts** (change frequently)
+- ❌ **Calendar events** (time-sensitive)
+
+**Cache Invalidation:**
+- Time-based (expire after duration)
+- Manual (user action, error)
+- Event-based (new folder created)
+
+#### 6. Add Delays Between Requests
+
+**Problem**: Rapid-fire requests can trigger throttling
+
+**Solution**: Spread requests over time
+
+```csharp
+// Simple delay between operations
+foreach (var folder in folders)
+{
+    var messages = await graphClient.Users[email]
+        .MailFolders[folder.Id]
+        .Messages
+        .GetAsync();
+
+    // Process messages...
+
+    // Small delay to be friendly to API
+    await Task.Delay(100); // 100ms = 10 requests/second
+}
+
+// Calculate ideal delay based on rate limit
+var idealDelayMs = (10 * 60 * 1000) / 10000; // = 60ms per request
+await Task.Delay(idealDelayMs);
+
+// Dynamic delay based on remaining quota
+var remainingQuota = 10000 - requestCount;
+var remainingTimeMs = (windowEnd - DateTime.UtcNow).TotalMilliseconds;
+var dynamicDelay = remainingTimeMs / remainingQuota;
+await Task.Delay(TimeSpan.FromMilliseconds(dynamicDelay));
+```
+
+**When to Use Delays:**
+- Processing many folders sequentially
+- Batch operations
+- Long-running exports
+- Background services
+
+**When NOT to Use:**
+- Interactive user operations (feels slow)
+- Single operations
+- Already using batch requests
+
+#### 7. Use $select to Request Only Needed Fields
+
+**Problem**: Requesting all fields returns unnecessary data
+
+**Solution**: Specify only fields you need
+
+```csharp
+// ❌ Bad: Request everything
+var messages = await graphClient.Users[email].Messages.GetAsync();
+// Returns 50+ fields per message
+// Larger response = more bandwidth, slower
+
+// ✅ Good: Request only what you need
+var messages = await graphClient.Users[email].Messages.GetAsync(config =>
+{
+    config.QueryParameters.Select = new[]
+    {
+        "id",
+        "subject",
+        "from",
+        "toRecipients",
+        "receivedDateTime",
+        "hasAttachments"
+    };
+});
+// Returns 6 fields per message
+// Smaller response = less bandwidth, faster
+```
+
+**Benefits:**
+- **Faster responses** (less data to transfer)
+- **Less bandwidth** (important for mobile/metered)
+- **Easier parsing** (only relevant fields)
+- **Same request count** (doesn't reduce API calls, but makes them faster)
+
+**Note**: This doesn't reduce request count toward rate limit, but improves overall performance and user experience.
+
+### Q: How should you log and monitor throttling in production?
+
+**A: Structured Logging with Key Metrics**
+
+```csharp
+public class ThrottlingLogger
+{
+    private readonly string _logPath = "throttling.log";
+
+    public async Task LogThrottlingEventAsync(
+        string operation,
+        string mailbox,
+        TimeSpan? retryAfter,
+        int requestCount)
+    {
+        var logEntry = new
+        {
+            Timestamp = DateTime.UtcNow,
+            Operation = operation,
+            Mailbox = mailbox,
+            RetryAfterSeconds = retryAfter?.TotalSeconds,
+            RequestCount = requestCount,
+            Severity = "WARNING"
+        };
+
+        var json = JsonSerializer.Serialize(logEntry);
+        await File.AppendAllTextAsync(_logPath, json + "\n");
+
+        // Also log to console
+        Console.WriteLine($"⚠️  THROTTLED: {operation} on {mailbox}");
+        Console.WriteLine($"   Retry after: {retryAfter?.TotalSeconds}s");
+        Console.WriteLine($"   Requests made: {requestCount}");
+    }
+}
+
+// Usage in try-catch:
+try
+{
+    var messages = await graphClient.Users[email].Messages.GetAsync();
+}
+catch (ServiceException ex)
+    when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+{
+    await logger.LogThrottlingEventAsync(
+        "GetMessages",
+        email,
+        ex.ResponseHeaders?.RetryAfter?.Delta,
+        requestTracker.CurrentCount
+    );
+
+    // Then retry...
+}
+```
+
+**What to Monitor:**
+- Throttling event frequency
+- Operations that trigger throttling
+- Time of day patterns
+- Specific mailboxes causing issues
+- Retry-After durations
+
+**Alerting Thresholds:**
+- Alert if throttled more than 3 times/hour
+- Alert if any operation exceeds 5 retries
+- Alert if 80% of rate limit used consistently
+
+### Key Takeaways: Rate Limits
+
+**Current Application Status:**
+- ✅ Well within limits (3-4% of quota)
+- ✅ Safe for normal operations
+- ⚠️  Could hit limits with large-scale exports
+
+**Priority Best Practices:**
+1. **Always use** `$top=1000` for pagination
+2. **Always implement** retry logic with exponential backoff
+3. **Consider** request tracking for visibility
+4. **Cache** mailbox discovery and folder structures
+
+**Future-Proofing:**
+- Implement now: Retry logic (prevents crashes)
+- Implement when scaling: Request tracking, caching
+- Implement for heavy use: Batch requests, delays
+- Monitor always: Log throttling events
+
+**September 2025 Change:**
+- Per-user limits will be reduced
+- Review and optimize before September 30, 2025
+- Test with tighter limits in advance
+
+---
+
 ## Key Takeaways
 
 ### Azure AD & Authentication
