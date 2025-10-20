@@ -103,79 +103,80 @@ try
     // Add known mailbox
     availableMailboxes.Add(("Arquivo ComDev - SAMSYS", "arquivo.comdev@samsys.pt", "Delegated"));
 
-    // Try to discover shared mailboxes
-    Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
-    try
+    // Only discover mailboxes if not specified via command-line argument
+    if (argMailbox == null)
     {
-        // Query Azure AD for shared mailboxes
-        // Shared mailboxes typically have accountEnabled = false and a mailbox
-        Console.WriteLine("Querying Azure AD for shared mailboxes...");
-
-        // Get all users with mailboxes that have accountEnabled = false (typical for shared mailboxes)
-        var usersResponse = await graphClient.Users.GetAsync(requestConfig =>
+        // Try to discover shared mailboxes
+        Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
+        try
         {
-            requestConfig.QueryParameters.Filter = "accountEnabled eq false";
-            requestConfig.QueryParameters.Select = new[] { "displayName", "mail", "userPrincipalName", "id" };
-            requestConfig.QueryParameters.Top = 100; // Limit to avoid large queries
-        });
+            // Query Azure AD for shared mailboxes
+            // Shared mailboxes typically have accountEnabled = false and a mailbox
+            Console.WriteLine("Querying Azure AD for shared mailboxes...");
 
-        var sharedMailboxCount = 0;
-
-        if (usersResponse?.Value != null && usersResponse.Value.Count > 0)
-        {
-            Console.WriteLine($"Found {usersResponse.Value.Count} potential shared mailbox(es). Testing access...\n");
-
-            foreach (var potentialSharedMailbox in usersResponse.Value)
+            // Get all users with mailboxes that have accountEnabled = false (typical for shared mailboxes)
+            var usersResponse = await graphClient.Users.GetAsync(requestConfig =>
             {
-                var mailboxEmail = potentialSharedMailbox.Mail ?? potentialSharedMailbox.UserPrincipalName;
+                requestConfig.QueryParameters.Filter = "accountEnabled eq false";
+                requestConfig.QueryParameters.Select = new[] { "displayName", "mail", "userPrincipalName", "id" };
+                requestConfig.QueryParameters.Top = 100; // Limit to avoid large queries
+            });
 
-                if (string.IsNullOrEmpty(mailboxEmail))
+            var sharedMailboxCount = 0;
+
+            if (usersResponse?.Value != null && usersResponse.Value.Count > 0)
+            {
+                Console.WriteLine($"Found {usersResponse.Value.Count} potential shared mailbox(es). Testing access...\n");
+
+                foreach (var potentialSharedMailbox in usersResponse.Value)
                 {
-                    continue;
-                }
+                    var mailboxEmail = potentialSharedMailbox.Mail ?? potentialSharedMailbox.UserPrincipalName;
 
-                // Test if current user has access to this shared mailbox
-                try
-                {
-                    Console.Write($"  Testing access to: {potentialSharedMailbox.DisplayName} ({mailboxEmail})... ");
-
-                    // Try to get the inbox to verify access
-                    var testAccess = await graphClient.Users[mailboxEmail].MailFolders.GetAsync(requestConfig =>
+                    if (string.IsNullOrEmpty(mailboxEmail))
                     {
-                        requestConfig.QueryParameters.Top = 1;
-                    });
+                        continue;
+                    }
 
-                    // If we get here, we have access
-                    Console.WriteLine("✓ Access granted");
-                    availableMailboxes.Add((potentialSharedMailbox.DisplayName ?? mailboxEmail, mailboxEmail, "Shared"));
-                    sharedMailboxCount++;
+                    // Test if current user has access to this shared mailbox
+                    try
+                    {
+                        Console.Write($"  Testing access to: {potentialSharedMailbox.DisplayName} ({mailboxEmail})... ");
+
+                        // Try to get the inbox to verify access
+                        var testAccess = await graphClient.Users[mailboxEmail].MailFolders.GetAsync(requestConfig =>
+                        {
+                            requestConfig.QueryParameters.Top = 1;
+                        });
+
+                        // If we get here, we have access
+                        Console.WriteLine("✓ Access granted");
+                        availableMailboxes.Add((potentialSharedMailbox.DisplayName ?? mailboxEmail, mailboxEmail, "Shared"));
+                        sharedMailboxCount++;
+                    }
+                    catch (Exception)
+                    {
+                        // No access to this mailbox - silently skip
+                        Console.WriteLine("✗ No access");
+                    }
                 }
-                catch (Exception)
-                {
-                    // No access to this mailbox - silently skip
-                    Console.WriteLine("✗ No access");
-                }
+
+                Console.WriteLine($"\nDiscovered {sharedMailboxCount} accessible shared mailbox(es).");
             }
-
-            Console.WriteLine($"\nDiscovered {sharedMailboxCount} accessible shared mailbox(es).");
+            else
+            {
+                Console.WriteLine("No shared mailboxes found in Azure AD query.");
+            }
         }
-        else
+        catch (Exception ex)
         {
-            Console.WriteLine("No shared mailboxes found in Azure AD query.");
+            Console.WriteLine($"Error during shared mailbox discovery: {ex.Message}");
+            Console.WriteLine("You can still manually enter shared mailbox addresses below.");
         }
     }
-    catch (Exception ex)
+    else
     {
-        Console.WriteLine($"Error during shared mailbox discovery: {ex.Message}");
-        Console.WriteLine("You can still manually enter shared mailbox addresses below.");
+        Console.WriteLine("\nSkipping mailbox discovery (mailbox specified via command-line).");
     }
-
-    Console.WriteLine($"\nFound {availableMailboxes.Count} mailbox(es):");
-    for (int i = 0; i < availableMailboxes.Count; i++)
-    {
-        Console.WriteLine($"  [{i + 1}] {availableMailboxes[i].DisplayName} ({availableMailboxes[i].Email}) - {availableMailboxes[i].Type}");
-    }
-    Console.WriteLine($"  [0] Enter custom mailbox email address");
 
     string selectedMailboxEmail = "";
     string selectedMailboxName = "";
@@ -202,6 +203,14 @@ try
     }
     else
     {
+        // Display available mailboxes for interactive selection
+        Console.WriteLine($"\nFound {availableMailboxes.Count} mailbox(es):");
+        for (int i = 0; i < availableMailboxes.Count; i++)
+        {
+            Console.WriteLine($"  [{i + 1}] {availableMailboxes[i].DisplayName} ({availableMailboxes[i].Email}) - {availableMailboxes[i].Type}");
+        }
+        Console.WriteLine($"  [0] Enter custom mailbox email address");
+
         Console.Write("\nSelect mailbox (enter number): ");
         selection = Console.ReadLine();
     }
