@@ -363,10 +363,18 @@ try
             }
             else
             {
-                Console.WriteLine($"✗ Folder '{argFolder}' not found. Using Inbox instead.");
-                var inboxFolder = allFolders.FirstOrDefault(f => f.DisplayName.Equals("Inbox", StringComparison.OrdinalIgnoreCase));
-                selectedFolderId = inboxFolder.Id;
-                selectedFolderName = "Inbox";
+                Console.WriteLine($"✗ Error: Folder '{argFolder}' not found.");
+                Console.WriteLine("\nAvailable folders:");
+                foreach (var folder in allFolders.Take(10))
+                {
+                    Console.WriteLine($"  - {folder.Path}");
+                }
+                if (allFolders.Count > 10)
+                {
+                    Console.WriteLine($"  ... and {allFolders.Count - 10} more folders");
+                }
+                Console.WriteLine("\nPlease specify a valid folder name or path.");
+                return;
             }
         }
         else
