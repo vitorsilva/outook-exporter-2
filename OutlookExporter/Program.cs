@@ -6,6 +6,46 @@ using System.Text.Json;
 Console.WriteLine("Outlook Email Exporter");
 Console.WriteLine("======================\n");
 
+// Parse command-line arguments
+string? argMailbox = null;
+string? argFolder = null;
+
+for (int i = 0; i < args.Length; i++)
+{
+    if ((args[i] == "--mailbox" || args[i] == "-m") && i + 1 < args.Length)
+    {
+        argMailbox = args[i + 1];
+        i++; // Skip next argument
+    }
+    else if ((args[i] == "--folder" || args[i] == "-f") && i + 1 < args.Length)
+    {
+        argFolder = args[i + 1];
+        i++; // Skip next argument
+    }
+    else if (args[i] == "--help" || args[i] == "-h")
+    {
+        Console.WriteLine("Usage: OutlookExporter [options]");
+        Console.WriteLine("\nOptions:");
+        Console.WriteLine("  -m, --mailbox <email>    Specify mailbox email address");
+        Console.WriteLine("  -f, --folder <name>      Specify folder name to export");
+        Console.WriteLine("  -h, --help               Show this help message");
+        Console.WriteLine("\nExamples:");
+        Console.WriteLine("  OutlookExporter --mailbox user@example.com --folder \"Sent Items\"");
+        Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox");
+        return;
+    }
+}
+
+if (argMailbox != null)
+{
+    Console.WriteLine($"Command-line argument: Mailbox = {argMailbox}");
+}
+if (argFolder != null)
+{
+    Console.WriteLine($"Command-line argument: Folder = {argFolder}");
+}
+Console.WriteLine();
+
 // Load configuration from appsettings.json
 var configuration = new ConfigurationBuilder()
     .SetBasePath(Directory.GetCurrentDirectory())
@@ -137,13 +177,36 @@ try
     }
     Console.WriteLine($"  [0] Enter custom mailbox email address");
 
-    Console.Write("\nSelect mailbox (enter number): ");
-    var selection = Console.ReadLine();
-
     string selectedMailboxEmail = "";
     string selectedMailboxName = "";
+    string? selection = null;
 
-    if (int.TryParse(selection, out int selectedIndex))
+    // Check if mailbox was provided via command-line argument
+    if (argMailbox != null)
+    {
+        Console.WriteLine($"\nUsing mailbox from command-line argument: {argMailbox}");
+        selectedMailboxEmail = argMailbox;
+
+        // Try to find the display name from available mailboxes
+        var matchedMailbox = availableMailboxes.FirstOrDefault(m =>
+            m.Email.Equals(argMailbox, StringComparison.OrdinalIgnoreCase));
+
+        if (matchedMailbox != default)
+        {
+            selectedMailboxName = matchedMailbox.DisplayName;
+        }
+        else
+        {
+            selectedMailboxName = argMailbox;
+        }
+    }
+    else
+    {
+        Console.Write("\nSelect mailbox (enter number): ");
+        selection = Console.ReadLine();
+    }
+
+    if (selection != null && int.TryParse(selection, out int selectedIndex))
     {
         if (selectedIndex == 0)
         {
@@ -192,7 +255,7 @@ try
             selectedMailboxName = user?.DisplayName ?? "Primary";
         }
     }
-    else
+    else if (selection != null)
     {
         Console.WriteLine("Invalid input, using primary mailbox.");
         selectedMailboxEmail = user?.Mail ?? user?.UserPrincipalName ?? "";
@@ -226,28 +289,53 @@ try
 
         Console.WriteLine("\nFolder listing completed successfully.");
 
-        // Ask user which folder to export
-        Console.Write("\nSelect folder to export (enter number, or press Enter for Inbox): ");
-        var folderSelection = Console.ReadLine();
-
-        if (!string.IsNullOrWhiteSpace(folderSelection) && int.TryParse(folderSelection, out int folderIndex))
+        // Check if folder was provided via command-line argument
+        if (argFolder != null)
         {
-            if (folderIndex > 0 && folderIndex <= folders.Value.Count)
+            Console.WriteLine($"\nUsing folder from command-line argument: {argFolder}");
+
+            // Try to find folder by name (case-insensitive)
+            var matchedFolder = folders.Value.FirstOrDefault(f =>
+                f.DisplayName != null && f.DisplayName.Equals(argFolder, StringComparison.OrdinalIgnoreCase));
+
+            if (matchedFolder != null)
             {
-                var selectedFolder = folders.Value[folderIndex - 1];
-                selectedFolderId = selectedFolder.Id;
-                selectedFolderName = selectedFolder.DisplayName ?? "Selected Folder";
+                selectedFolderId = matchedFolder.Id;
+                selectedFolderName = matchedFolder.DisplayName ?? argFolder;
+                Console.WriteLine($"✓ Found folder: {selectedFolderName}");
             }
             else
             {
-                Console.WriteLine("Invalid selection, using Inbox.");
+                Console.WriteLine($"✗ Folder '{argFolder}' not found. Using Inbox instead.");
                 selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+                selectedFolderName = "Inbox";
             }
         }
         else
         {
-            // Default to Inbox
-            selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+            // Ask user which folder to export
+            Console.Write("\nSelect folder to export (enter number, or press Enter for Inbox): ");
+            var folderSelection = Console.ReadLine();
+
+            if (!string.IsNullOrWhiteSpace(folderSelection) && int.TryParse(folderSelection, out int folderIndex))
+            {
+                if (folderIndex > 0 && folderIndex <= folders.Value.Count)
+                {
+                    var selectedFolder = folders.Value[folderIndex - 1];
+                    selectedFolderId = selectedFolder.Id;
+                    selectedFolderName = selectedFolder.DisplayName ?? "Selected Folder";
+                }
+                else
+                {
+                    Console.WriteLine("Invalid selection, using Inbox.");
+                    selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+                }
+            }
+            else
+            {
+                // Default to Inbox
+                selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+            }
         }
     }
     else
