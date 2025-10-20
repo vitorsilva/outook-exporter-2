@@ -266,24 +266,80 @@ try
 
     // List all mail folders
     Console.WriteLine("\n" + new string('=', 50));
-    Console.WriteLine("Retrieving mail folders...");
+    Console.WriteLine("Retrieving mail folders (including subfolders)...");
     Console.WriteLine(new string('=', 50));
 
-    var folders = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync();
+    // Get all folders including nested subfolders
+    var allFolders = new List<(string Id, string DisplayName, string Path, int TotalItems, int UnreadItems)>();
+
+    async Task GetFoldersRecursive(string parentFolderId, string parentPath)
+    {
+        var childFolders = await graphClient.Users[selectedMailboxEmail]
+            .MailFolders[parentFolderId]
+            .ChildFolders
+            .GetAsync();
+
+        if (childFolders?.Value != null)
+        {
+            foreach (var folder in childFolders.Value)
+            {
+                var folderPath = string.IsNullOrEmpty(parentPath)
+                    ? folder.DisplayName ?? ""
+                    : $"{parentPath}/{folder.DisplayName}";
+
+                allFolders.Add((
+                    folder.Id ?? "",
+                    folder.DisplayName ?? "",
+                    folderPath,
+                    folder.TotalItemCount ?? 0,
+                    folder.UnreadItemCount ?? 0
+                ));
+
+                // Recursively get child folders
+                if (folder.ChildFolderCount > 0)
+                {
+                    await GetFoldersRecursive(folder.Id ?? "", folderPath);
+                }
+            }
+        }
+    }
+
+    // Get root level folders first
+    var rootFolders = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync();
+
+    if (rootFolders?.Value != null)
+    {
+        foreach (var folder in rootFolders.Value)
+        {
+            allFolders.Add((
+                folder.Id ?? "",
+                folder.DisplayName ?? "",
+                folder.DisplayName ?? "",
+                folder.TotalItemCount ?? 0,
+                folder.UnreadItemCount ?? 0
+            ));
+
+            // Get subfolders if any
+            if (folder.ChildFolderCount > 0)
+            {
+                await GetFoldersRecursive(folder.Id ?? "", folder.DisplayName ?? "");
+            }
+        }
+    }
 
     string? selectedFolderId = null;
     string selectedFolderName = "Inbox";
 
-    if (folders?.Value != null && folders.Value.Count > 0)
+    if (allFolders.Count > 0)
     {
-        Console.WriteLine($"\nFound {folders.Value.Count} mail folders:\n");
+        Console.WriteLine($"\nFound {allFolders.Count} mail folder(s) (including subfolders):\n");
 
-        for (int i = 0; i < folders.Value.Count; i++)
+        for (int i = 0; i < allFolders.Count; i++)
         {
-            var folder = folders.Value[i];
-            Console.WriteLine($"  [{i + 1}] {folder.DisplayName}");
-            Console.WriteLine($"      Total Items: {folder.TotalItemCount}");
-            Console.WriteLine($"      Unread Items: {folder.UnreadItemCount}");
+            var folder = allFolders[i];
+            Console.WriteLine($"  [{i + 1}] {folder.Path}");
+            Console.WriteLine($"      Total Items: {folder.TotalItems}");
+            Console.WriteLine($"      Unread Items: {folder.UnreadItems}");
             Console.WriteLine();
         }
 
@@ -294,20 +350,22 @@ try
         {
             Console.WriteLine($"\nUsing folder from command-line argument: {argFolder}");
 
-            // Try to find folder by name (case-insensitive)
-            var matchedFolder = folders.Value.FirstOrDefault(f =>
-                f.DisplayName != null && f.DisplayName.Equals(argFolder, StringComparison.OrdinalIgnoreCase));
+            // Try to find folder by name or path (case-insensitive)
+            var matchedFolder = allFolders.FirstOrDefault(f =>
+                f.DisplayName.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
+                f.Path.Equals(argFolder, StringComparison.OrdinalIgnoreCase));
 
-            if (matchedFolder != null)
+            if (matchedFolder != default)
             {
                 selectedFolderId = matchedFolder.Id;
-                selectedFolderName = matchedFolder.DisplayName ?? argFolder;
+                selectedFolderName = matchedFolder.Path;
                 Console.WriteLine($"✓ Found folder: {selectedFolderName}");
             }
             else
             {
                 Console.WriteLine($"✗ Folder '{argFolder}' not found. Using Inbox instead.");
-                selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+                var inboxFolder = allFolders.FirstOrDefault(f => f.DisplayName.Equals("Inbox", StringComparison.OrdinalIgnoreCase));
+                selectedFolderId = inboxFolder.Id;
                 selectedFolderName = "Inbox";
             }
         }
@@ -319,22 +377,26 @@ try
 
             if (!string.IsNullOrWhiteSpace(folderSelection) && int.TryParse(folderSelection, out int folderIndex))
             {
-                if (folderIndex > 0 && folderIndex <= folders.Value.Count)
+                if (folderIndex > 0 && folderIndex <= allFolders.Count)
                 {
-                    var selectedFolder = folders.Value[folderIndex - 1];
+                    var selectedFolder = allFolders[folderIndex - 1];
                     selectedFolderId = selectedFolder.Id;
-                    selectedFolderName = selectedFolder.DisplayName ?? "Selected Folder";
+                    selectedFolderName = selectedFolder.Path;
                 }
                 else
                 {
                     Console.WriteLine("Invalid selection, using Inbox.");
-                    selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+                    var inboxFolder = allFolders.FirstOrDefault(f => f.DisplayName.Equals("Inbox", StringComparison.OrdinalIgnoreCase));
+                    selectedFolderId = inboxFolder.Id;
+                    selectedFolderName = "Inbox";
                 }
             }
             else
             {
                 // Default to Inbox
-                selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+                var inboxFolder = allFolders.FirstOrDefault(f => f.DisplayName.Equals("Inbox", StringComparison.OrdinalIgnoreCase));
+                selectedFolderId = inboxFolder.Id;
+                selectedFolderName = "Inbox";
             }
         }
     }
