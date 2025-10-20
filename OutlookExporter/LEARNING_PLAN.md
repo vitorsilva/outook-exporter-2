@@ -1422,6 +1422,166 @@ dotnet build
    - Filter by subject keywords
    - Filter by importance/category
 
+### Experimental Ideas for Future Exploration
+
+1. **Enhanced Console UI with Spectre.Console**
+   - **Library**: [Spectre.Console](https://github.com/spectreconsole/spectre.console)
+   - **What it provides**:
+     - Rich text formatting with colors and styles
+     - Interactive menus and prompts
+     - Progress bars and spinners
+     - Tables with borders and formatting
+     - Tree views for hierarchical data (perfect for folders!)
+     - Panels and layouts
+   - **Why explore this**:
+     - Current app uses basic `Console.WriteLine`
+     - Spectre.Console would make output more professional
+     - Better user experience with interactive menus
+     - Visual progress indicators for long operations
+     - Folder selection could use tree view instead of numbered list
+   - **Learning goals**:
+     - Modern console UI development
+     - User experience design in CLI apps
+     - Understanding markup languages for console output
+   - **Example use cases**:
+     ```csharp
+     // Instead of basic menu:
+     Console.WriteLine("[1] Inbox");
+     Console.WriteLine("[2] Sent Items");
+
+     // Use Spectre.Console:
+     var folder = AnsiConsole.Prompt(
+         new SelectionPrompt<string>()
+             .Title("Select [green]folder[/] to export:")
+             .AddChoices(new[] { "Inbox", "Sent Items", "Drafts" })
+     );
+
+     // Instead of basic progress:
+     Console.WriteLine("Exporting...");
+
+     // Use Spectre.Console:
+     AnsiConsole.Progress()
+         .Start(ctx => {
+             var task = ctx.AddTask("[green]Exporting emails[/]");
+             // Update progress as emails are exported
+         });
+
+     // Display folders as tree:
+     var tree = new Tree("Mailbox Folders");
+     tree.AddNode("[blue]Inbox[/]")
+         .AddNode("[blue]Clients[/]")
+             .AddNode("[blue]A[/]")
+                 .AddNode("[blue]Aber[/]");
+     AnsiConsole.Write(tree);
+     ```
+
+2. **Code Modularization & Architecture Refactoring**
+   - **Current state**: ~400+ lines in single `Program.cs` file
+   - **Problem**: As features grow, single file becomes hard to maintain
+   - **Goals**:
+     - Separate concerns (auth, API calls, export, UI)
+     - Improve testability
+     - Enable code reuse
+     - Make adding features easier
+   - **Proposed architecture**:
+     ```
+     OutlookExporter/
+     ├── Program.cs                    # Entry point (~50 lines)
+     ├── Services/
+     │   ├── AuthenticationService.cs  # Device Code Flow, token management
+     │   ├── GraphApiService.cs        # All Graph API calls
+     │   ├── MailboxDiscovery.cs       # Shared mailbox discovery
+     │   ├── FolderDiscovery.cs        # Recursive folder discovery
+     │   └── EmailExporter.cs          # Export logic, JSON serialization
+     ├── Models/
+     │   ├── MailboxInfo.cs            # (DisplayName, Email, Type)
+     │   ├── FolderInfo.cs             # (Id, Name, Path, Total, Unread)
+     │   └── ExportOptions.cs          # Command-line args, config
+     ├── UI/
+     │   ├── ConsoleUI.cs              # User interaction, menus
+     │   └── ArgumentParser.cs         # Command-line parsing
+     └── Configuration/
+         └── AppSettings.cs            # Configuration model
+     ```
+   - **Benefits**:
+     - ✅ Single Responsibility Principle (each class has one job)
+     - ✅ Dependency Injection (easier testing, mocking)
+     - ✅ Unit testable (can test each service independently)
+     - ✅ Easier to add features (know where to add code)
+     - ✅ Better for team collaboration
+     - ✅ Reusable components (use GraphApiService in other projects)
+   - **Learning goals**:
+     - Software architecture patterns
+     - SOLID principles
+     - Dependency injection in .NET
+     - Unit testing with xUnit/NUnit
+     - Separation of concerns
+   - **Example refactoring**:
+     ```csharp
+     // Before (in Program.cs):
+     var users = await graphClient.Users.GetAsync(...);
+     foreach (var user in users.Value) { ... }
+
+     // After (in MailboxDiscoveryService.cs):
+     public class MailboxDiscoveryService
+     {
+         private readonly IGraphApiService _graphApi;
+
+         public MailboxDiscoveryService(IGraphApiService graphApi)
+         {
+             _graphApi = graphApi;
+         }
+
+         public async Task<List<MailboxInfo>> DiscoverSharedMailboxesAsync()
+         {
+             var users = await _graphApi.GetDisabledUsersAsync();
+             var accessible = new List<MailboxInfo>();
+
+             foreach (var user in users)
+             {
+                 if (await _graphApi.TestMailboxAccessAsync(user.Mail))
+                 {
+                     accessible.Add(new MailboxInfo(
+                         user.DisplayName,
+                         user.Mail,
+                         MailboxType.Shared
+                     ));
+                 }
+             }
+
+             return accessible;
+         }
+     }
+
+     // Usage in Program.cs:
+     var discoveryService = new MailboxDiscoveryService(graphApiService);
+     var mailboxes = await discoveryService.DiscoverSharedMailboxesAsync();
+     ```
+   - **Testing example**:
+     ```csharp
+     [Fact]
+     public async Task DiscoverSharedMailboxes_ReturnsOnlyAccessible()
+     {
+         // Arrange
+         var mockGraphApi = new Mock<IGraphApiService>();
+         mockGraphApi.Setup(x => x.GetDisabledUsersAsync())
+             .ReturnsAsync(new[] { user1, user2, user3 });
+         mockGraphApi.Setup(x => x.TestMailboxAccessAsync("user1@test.com"))
+             .ReturnsAsync(true);
+         mockGraphApi.Setup(x => x.TestMailboxAccessAsync("user2@test.com"))
+             .ReturnsAsync(false);
+
+         var service = new MailboxDiscoveryService(mockGraphApi.Object);
+
+         // Act
+         var result = await service.DiscoverSharedMailboxesAsync();
+
+         // Assert
+         Assert.Single(result);
+         Assert.Equal("user1@test.com", result[0].Email);
+     }
+     ```
+
 ### Other Microsoft 365 Integrations
 
 Now that you understand Microsoft Graph:
