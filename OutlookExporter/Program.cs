@@ -60,6 +60,9 @@ try
     // Add primary mailbox
     availableMailboxes.Add((user?.DisplayName ?? "Primary Mailbox", user?.Mail ?? user?.UserPrincipalName ?? "", "Primary"));
 
+    // Add known mailbox
+    availableMailboxes.Add(("Arquivo ComDev - SAMSYS", "arquivo.comdev@samsys.pt", "Delegated"));
+
     // Try to discover shared mailboxes
     Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
     try
