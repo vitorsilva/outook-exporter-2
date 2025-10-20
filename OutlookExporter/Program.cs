@@ -208,17 +208,46 @@ try
 
     var folders = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync();
 
+    string? selectedFolderId = null;
+    string selectedFolderName = "Inbox";
+
     if (folders?.Value != null && folders.Value.Count > 0)
     {
         Console.WriteLine($"\nFound {folders.Value.Count} mail folders:\n");
 
-        foreach (var folder in folders.Value)
+        for (int i = 0; i < folders.Value.Count; i++)
         {
-            Console.WriteLine($"  - {folder.DisplayName}");
-            Console.WriteLine($"    ID: {folder.Id}");
-            Console.WriteLine($"    Total Items: {folder.TotalItemCount}");
-            Console.WriteLine($"    Unread Items: {folder.UnreadItemCount}");
+            var folder = folders.Value[i];
+            Console.WriteLine($"  [{i + 1}] {folder.DisplayName}");
+            Console.WriteLine($"      Total Items: {folder.TotalItemCount}");
+            Console.WriteLine($"      Unread Items: {folder.UnreadItemCount}");
             Console.WriteLine();
+        }
+
+        Console.WriteLine("\nFolder listing completed successfully.");
+
+        // Ask user which folder to export
+        Console.Write("\nSelect folder to export (enter number, or press Enter for Inbox): ");
+        var folderSelection = Console.ReadLine();
+
+        if (!string.IsNullOrWhiteSpace(folderSelection) && int.TryParse(folderSelection, out int folderIndex))
+        {
+            if (folderIndex > 0 && folderIndex <= folders.Value.Count)
+            {
+                var selectedFolder = folders.Value[folderIndex - 1];
+                selectedFolderId = selectedFolder.Id;
+                selectedFolderName = selectedFolder.DisplayName ?? "Selected Folder";
+            }
+            else
+            {
+                Console.WriteLine("Invalid selection, using Inbox.");
+                selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
+            }
+        }
+        else
+        {
+            // Default to Inbox
+            selectedFolderId = folders.Value.FirstOrDefault(f => f.DisplayName == "Inbox")?.Id;
         }
     }
     else
@@ -226,15 +255,13 @@ try
         Console.WriteLine("\nNo folders found.");
     }
 
-    Console.WriteLine("\nFolder listing completed successfully.");
-
     // Export emails to JSON
     Console.WriteLine("\n" + new string('=', 50));
-    Console.WriteLine("Exporting emails from Inbox to JSON...");
+    Console.WriteLine($"Exporting emails from {selectedFolderName} to JSON...");
     Console.WriteLine(new string('=', 50));
 
     // Get emails with all properties except attachments
-    var messages = await graphClient.Users[selectedMailboxEmail].MailFolders["Inbox"].Messages
+    var messages = await graphClient.Users[selectedMailboxEmail].MailFolders[selectedFolderId ?? "Inbox"].Messages
         .GetAsync(requestConfig =>
         {
             requestConfig.QueryParameters.Top = 5; // Get only 5 emails for testing
@@ -303,8 +330,9 @@ try
         };
         var json = JsonSerializer.Serialize(emailData, jsonOptions);
 
-        // Save to file
-        var outputFile = "exported_emails.json";
+        // Save to file with folder name
+        var sanitizedFolderName = string.Concat(selectedFolderName.Split(Path.GetInvalidFileNameChars()));
+        var outputFile = $"exported_emails_{sanitizedFolderName}.json";
         await File.WriteAllTextAsync(outputFile, json);
 
         Console.WriteLine($"✓ Exported {emailData.Count} emails to: {outputFile}");
@@ -312,7 +340,7 @@ try
     }
     else
     {
-        Console.WriteLine("\nNo emails found in Inbox.");
+        Console.WriteLine($"\nNo emails found in {selectedFolderName}.");
     }
 
     Console.WriteLine("\nExport completed successfully.");
