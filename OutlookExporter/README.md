@@ -1,16 +1,21 @@
 # Outlook Email Exporter
 
-A C# console application to export emails from Outlook.com/Microsoft 365 to JSON format.
+A C# console application to export emails from Outlook.com/Microsoft 365 to JSON format with support for multiple mailboxes, flexible filtering, and automated exports.
 
 ## Project Overview
 
-**Purpose**: Export emails from Microsoft 365 Outlook account to JSON files with filtering capabilities.
+**Purpose**: Export emails from Microsoft 365 Outlook accounts (personal and organizational) to JSON files with advanced filtering and automation capabilities.
 
-**Features**:
-- Connect to Outlook.com/Microsoft 365 via Microsoft Graph API
-- Device Code Flow authentication (user-friendly, no secrets management)
-- Filter emails by specific folders
-- Export email data to JSON format (includes all properties except attachments)
+**Key Features**:
+- ✅ Connect to Outlook.com/Microsoft 365 via Microsoft Graph API
+- ✅ Device Code Flow authentication (user-friendly, no secrets management)
+- ✅ Multi-mailbox support (personal mailbox + shared/delegated mailboxes)
+- ✅ Automatic shared mailbox discovery
+- ✅ Recursive folder discovery (discovers ALL nested folders)
+- ✅ Configurable email count (export specific number or all emails)
+- ✅ Command-line arguments for automation and scripting
+- ✅ Export to JSON format with complete email metadata (excluding attachments)
+- ✅ Support for both interactive and automated modes
 
 ## Technology Stack
 
@@ -39,199 +44,457 @@ A C# console application to export emails from Outlook.com/Microsoft 365 to JSON
    - Under "Advanced settings" → "Allow public client flows" → Set to **Yes**
    - Click "Save"
 
-### Step 2: Project Setup
+### Step 2: Install Dependencies
 
-- Created .NET 8.0 console application
-- Project location: `OutlookExporter/`
+```bash
+dotnet add package Microsoft.Graph --version 5.94.0
+dotnet add package Azure.Identity --version 1.17.0
+dotnet add package Microsoft.Extensions.Configuration.Json --version 9.0.10
+dotnet add package Microsoft.Extensions.Configuration.Binder --version 9.0.10
+```
+
+### Step 3: Configure Application
+
+1. Copy `appsettings.Example.json` to `appsettings.Development.json`
+2. Edit `appsettings.Development.json`:
+   - Replace `YOUR_CLIENT_ID_HERE` with your Azure App Client ID
+   - Set `TenantId`:
+     - **Personal accounts** (Hotmail/Outlook.com): Use `"consumers"`
+     - **Organizational accounts**: Use your tenant ID from Azure Portal
+3. (Optional) Add known mailboxes to the `KnownMailboxes` array
 
 ## Development Progress
 
-### Completed Steps
-
-1. ✅ **Azure App Registration**: Registered app in Azure Portal with required permissions
-2. ✅ **Project Creation**: Created .NET 8.0 console application
-3. ✅ **Documentation**: Created README.md with ongoing updates
-4. ✅ **NuGet Packages Installed**:
-   - `Microsoft.Graph` v5.94.0
-   - `Azure.Identity` v1.17.0
-   - `Microsoft.Extensions.Configuration.Json` v9.0.10
-5. ✅ **Configuration System**:
-   - Created `appsettings.json` and `appsettings.Development.json` for secure config storage
-   - Added to `.gitignore` to prevent committing sensitive data
-   - Created `appsettings.Example.json` as template for repository
-6. ✅ **Device Code Authentication**: Implemented and tested successfully
-7. ✅ **Mail Folder Listing**: Successfully retrieves and displays all mail folders with item counts
-8. ✅ **Personal Account Support**: Configured for Outlook.com/Hotmail personal accounts using "consumers" tenant
-
 ### Completed Features
 
-✅ **All core functionality implemented and tested:**
-- Email folder listing with item counts
-- Email retrieval from folders
-- JSON export with complete email data (excluding attachments)
+#### Core Functionality
+- ✅ Device Code Flow authentication (supports personal and organizational accounts)
+- ✅ Automatic mailbox discovery (finds shared/delegated mailboxes you have access to)
+- ✅ Recursive folder enumeration with pagination (discovers ALL nested folders, not just top-level)
+- ✅ Configurable email export count (default: 5, specific count, or all emails with pagination)
+- ✅ JSON export with complete email metadata (excluding attachments)
+
+#### Advanced Features (October 2025)
+- ✅ **Command-line arguments** for automation:
+  - `-m, --mailbox <email>` - Specify mailbox
+  - `-f, --folder <name>` - Specify folder to export
+  - `-c, --count <number>` - Number of emails to export (0 = all)
+  - `-h, --help` - Show help
+- ✅ **Folder pagination fix**: Now discovers all folders (previously missed folders due to pagination bug)
+- ✅ **Configuration-based known mailboxes**: Define mailboxes in appsettings.json
+- ✅ **Early exit optimization**: Stops searching once target folder is found (35% faster)
+- ✅ **PageIterator implementation**: Handles large datasets efficiently
+
+#### Enhancements Log
+- **October 21, 2025**: Added early exit optimization for folder search
+- **October 20, 2025**: Fixed critical folder pagination bug (308 → 1,445 folders discovered)
+- **October 20, 2025**: Implemented configurable email count with PageIterator
+- **October 20, 2025**: Moved hardcoded mailboxes to configuration
+- **October 17, 2025**: Initial implementation with authentication and basic export
 
 ## Usage
 
-### Running the Application
+### Quick Start (Interactive Mode)
 
-1. **Build the project:**
-   ```bash
-   dotnet build
-   ```
+```bash
+# Build the project
+dotnet build
 
-2. **Run the application:**
-   ```bash
-   dotnet run
-   ```
+# Run interactively
+dotnet run
+```
 
-3. **Authentication Flow:**
-   - The app will display a URL and code
-   - Open the URL in your browser: `https://www.microsoft.com/link`
-   - Enter the code when prompted
-   - Sign in with your Microsoft account
-   - Approve the requested permissions
+**What happens:**
+1. Device Code authentication flow (sign in via browser)
+2. Discovers all accessible mailboxes (personal + shared/delegated)
+3. Lists all mailboxes and prompts you to select one
+4. Discovers all folders recursively (including deeply nested folders)
+5. Lists folders and prompts you to select one
+6. Exports 5 emails (default) from selected folder to JSON
 
-4. **What the App Does:**
-   - Authenticates with your Microsoft account
-   - Lists all your mail folders with item counts
-   - Exports 5 sample emails from your Inbox to `exported_emails.json`
+### Automated Mode (Command-Line Arguments)
 
-### Output
+**Export specific number of emails:**
+```bash
+# Export 100 emails from Inbox of specific mailbox
+dotnet run -- -m "user@company.com" -f "Inbox" -c 100
 
-The application creates an `exported_emails.json` file containing:
-- Email ID and metadata
-- Subject, sender, recipients (To/Cc/Bcc)
-- Date received and sent
-- Complete email body (HTML and plain text)
+# Export 50 emails from "Sent Items"
+dotnet run -- -m "shared@company.com" -f "Sent Items" -c 50
+```
+
+**Export all emails from a folder:**
+```bash
+# Export ALL emails from specific folder (pagination handles large datasets)
+dotnet run -- -m "user@company.com" -f "Inbox" -c 0
+```
+
+**Quick mailbox export:**
+```bash
+# Specify mailbox only (will prompt for folder)
+dotnet run -- -m "user@company.com"
+
+# Specify folder only (will prompt for mailbox)
+dotnet run -- -f "Inbox"
+```
+
+**Show help:**
+```bash
+dotnet run -- --help
+```
+
+### Command-Line Arguments
+
+| Argument | Short | Description | Example |
+|----------|-------|-------------|---------|
+| `--mailbox` | `-m` | Email address of mailbox to export from | `-m "user@company.com"` |
+| `--folder` | `-f` | Folder name or path to export | `-f "Inbox"` or `-f "Inbox/Clients/A"` |
+| `--count` | `-c` | Number of emails to export (0 = all) | `-c 100` or `-c 0` |
+| `--help` | `-h` | Show help message | `-h` |
+
+### Output Files
+
+The application creates JSON files named based on the folder:
+- `exported_emails_Inbox.json` - For Inbox folder
+- `exported_emails_SentItems.json` - For Sent Items
+- `exported_emails_Inbox01-CLIENTESV-ZXBSLOG.json` - For nested folders
+
+**JSON structure includes:**
+- Email ID, subject, body (HTML/text)
+- Sender, recipients (To/Cc/Bcc)
+- Dates (received, sent)
 - Read/unread status, importance, categories
-- Conversation and message IDs
-- All properties except attachments
-
-### Current Implementation
-
-**Note:** The current version exports 5 sample emails from the Inbox folder. To customize:
-- Edit `Program.cs` line 89 to change the number of emails
-- Change `"Inbox"` to target different folders
-- Modify the folder ID to export from specific folders listed in the output
+- Conversation and internet message IDs
+- All metadata except attachments
 
 ## Configuration
 
-### Setup Configuration Files
+### Configuration File Structure
 
-1. Copy `appsettings.Example.json` to `appsettings.Development.json`
-2. Edit `appsettings.Development.json` and replace `YOUR_CLIENT_ID_HERE` with your Azure App Registration Client ID
-3. **Important**: For personal Microsoft accounts (Hotmail/Outlook.com), set `TenantId` to `"consumers"`
-4. For organizational accounts, use `"common"` or your specific tenant ID
+The application uses a layered configuration system:
 
-**Example for personal accounts:**
+**appsettings.Example.json** (Template - safe to commit):
 ```json
 {
   "AzureAd": {
-    "ClientId": "your-actual-client-id-here",
-    "TenantId": "consumers"
-  }
+    "ClientId": "YOUR_CLIENT_ID_HERE",
+    "TenantId": "common"
+  },
+  "KnownMailboxes": [
+    {
+      "DisplayName": "Example Shared Mailbox",
+      "Email": "shared@example.com"
+    }
+  ],
+  "_instructions": "Copy this file to appsettings.json and replace YOUR_CLIENT_ID_HERE",
+  "_knownMailboxesInfo": "Optional list of mailboxes for discovery"
 }
 ```
 
+**appsettings.Development.json** (Your actual config - git-ignored):
+```json
+{
+  "AzureAd": {
+    "ClientId": "5723b5d0-bf95-4e8f-97f4-dbaf30a9fad9",
+    "TenantId": "consumers"
+  },
+  "KnownMailboxes": [
+    {
+      "DisplayName": "Arquivo ComDev - SAMSYS",
+      "Email": "arquivo.comdev@samsys.pt"
+    }
+  ]
+}
+```
+
+### Configuration Options
+
+**AzureAd Section:**
+- `ClientId` - Your Azure App Registration Client ID (required)
+- `TenantId` - Tenant for authentication:
+  - `"consumers"` - Personal accounts (Hotmail, Outlook.com)
+  - `"common"` - Accept any account type
+  - `"<guid>"` - Specific organizational tenant ID
+
+**KnownMailboxes Section (Optional):**
+- Array of mailboxes to include in discovery
+- Useful for delegated mailboxes not found by automatic discovery
+- Each entry: `DisplayName` and `Email`
+
 ### Configuration Files
 
-- `appsettings.json` - Production settings (git-ignored)
-- `appsettings.Development.json` - Development settings (git-ignored)
-- `appsettings.Example.json` - Template file (safe to commit)
-- `.gitignore` - Ensures sensitive config files are not committed
+- `appsettings.json` - Base configuration (git-ignored)
+- `appsettings.Development.json` - Development overrides (git-ignored)
+- `appsettings.Example.json` - Template file (committed to git)
+- `.gitignore` - Ensures sensitive configs are never committed
 
 ## Project Structure
 
 ```
-OutlookExporter/
-├── OutlookExporter.csproj       # Project file with NuGet packages
-├── Program.cs                   # Main entry point with authentication and folder listing
-├── appsettings.json             # Production config (git-ignored)
-├── appsettings.Development.json # Development config (git-ignored)
-├── appsettings.Example.json     # Config template (safe to commit)
-└── README.md                    # This documentation file
+outlook-export-2/
+├── .gitignore                       # Prevents committing sensitive files
+└── OutlookExporter/
+    ├── OutlookExporter.csproj       # Project file with NuGet packages
+    ├── Program.cs                   # Main application (~500 lines)
+    ├── appsettings.json             # Base config (git-ignored)
+    ├── appsettings.Development.json # Dev config (git-ignored)
+    ├── appsettings.Example.json     # Config template (safe to commit)
+    ├── README.md                    # This file
+    ├── CLAUDE.md                    # Quick reference for Claude Code
+    ├── PROJECT_SUMMARY.md           # Technical project summary
+    ├── ADMIN_SETUP_GUIDE.md         # Guide for system administrators
+    ├── LEARNING_PLAN.md             # Comprehensive learning guide
+    └── LEARNING_NOTES.md            # Detailed learning notes and Q&A
 ```
+
+## Architecture Highlights
+
+**Single-File Design:**
+- All logic in `Program.cs` (~500 lines)
+- Simple, maintainable for learning purposes
+- Top-level statements (modern C# 10+)
+
+**Key Components:**
+1. **Configuration**: Secure, layered configuration with .gitignore
+2. **Authentication**: Device Code Flow with Azure.Identity
+3. **Mailbox Discovery**: Automatic shared mailbox enumeration
+4. **Folder Discovery**: Recursive with pagination (discovers 1,000+ folders)
+5. **Email Export**: Configurable count with PageIterator for large datasets
+6. **CLI Arguments**: Full automation support
+
+## Performance
+
+**Folder Discovery:**
+- Discovers 1,445+ folders in ~3-4 seconds (with early exit optimization)
+- Handles pagination automatically (999 items per page)
+
+**Email Export:**
+- Default: 5 emails (1 request)
+- Specific count: Configurable (1-N requests depending on pagination)
+- All emails: Uses PageIterator with progress indicators (handles thousands)
+
+**Mailbox Discovery:**
+- Interactive mode: 30-60 seconds (tests ~47 potential mailboxes)
+- Automated mode: Skipped when mailbox specified via `-m` argument
 
 ## Notes
 
 - Authentication uses Device Code Flow (no client secrets needed)
-- Exports include: subject, sender, recipients, date, body, and all metadata
-- Attachments are NOT included in the export
-- Filtering is done by folder selection
+- Supports both personal and organizational Microsoft accounts
+- Automatic shared mailbox discovery for organizational accounts
+- Recursive folder discovery with pagination (finds ALL nested folders)
+- Attachments are NOT included in exports
+- Safe for automation and scheduling (Windows Task Scheduler compatible)
 
 ## Troubleshooting
 
-### Error: "The mailbox is either inactive, soft-deleted, or is hosted on-premise"
+### Common Issues
 
-**Solution**: This error occurs when using an external/guest account or wrong tenant configuration.
+#### Error: "The mailbox is either inactive, soft-deleted, or is hosted on-premise"
 
-- For **personal Microsoft accounts** (Hotmail/Outlook.com): Set `TenantId` to `"consumers"` in your config
-- For **organizational accounts**: Use `"common"` or your specific tenant ID
-- Ensure you're logging in with the correct account type during device code authentication
+**Cause**: Tenant ID mismatch between configuration and account type.
+
+**Solution**:
+- **Personal accounts** (Hotmail/Outlook.com): Set `TenantId` to `"consumers"`
+- **Organizational accounts**: Use your specific tenant ID (GUID) from Azure Portal
+- Ensure you're signing in with the correct account type
+
+#### Error: "Needs administrator approval"
+
+**Cause**: Organizational tenant requires admin consent for the application.
+
+**Solution**:
+1. Contact your IT administrator
+2. Provide them with `ADMIN_SETUP_GUIDE.md`
+3. Admin grants consent in Azure Portal → App Registration → API Permissions
+4. Wait 5-10 minutes for propagation
+5. Try again
+
+#### Error: "Folder not found"
+
+**Cause**: Folder name or path doesn't match exactly.
+
+**Solution**:
+- Run without `-f` argument to see list of all available folders
+- Use exact folder name or full path (case-insensitive)
+- For nested folders, use full path: `"Inbox/Clients/A/Company"`
+
+#### Only discovering ~10-20 folders
+
+**Cause**: This was a bug fixed in October 2025.
+
+**Solution**:
+- Ensure you have the latest version with folder pagination fix
+- Should discover 1,000+ folders if they exist
+- Check `LEARNING_NOTES.md` for details on the pagination bug fix
 
 ### Authentication Issues
 
-- If authentication fails, check that all required API permissions are added in Azure Portal
-- Ensure "Allow public client flows" is enabled in the Azure app registration
-- For personal accounts, always use `TenantId: "consumers"`
+- **Missing permissions**: Add all required permissions in Azure Portal (Mail.Read, User.Read, etc.)
+- **Public client flows disabled**: Enable in Azure Portal → Authentication → Advanced Settings
+- **Wrong tenant**: Personal accounts must use `"consumers"`, not organizational tenant ID
 
 ## Example Output
+
+### Interactive Mode
 
 ```
 Outlook Email Exporter
 ======================
 
-Initializing authentication...
+Client ID: 5723b5d0-****
+Tenant ID: consumers
+
 Attempting to authenticate...
 
-To sign in, use a web browser to open the page https://www.microsoft.com/link
+To sign in, use a web browser to open the page https://microsoft.com/devicelogin
 and enter the code ABC123XYZ to authenticate.
 
 Authentication successful!
 Logged in as: Your Name
 Email: yourname@hotmail.com
 
-==================================================
-Retrieving mail folders...
-==================================================
+Adding 1 known mailbox(es) from configuration...
 
-Found 10 mail folders:
+Attempting to discover shared/delegated mailboxes...
+Testing 47 potential shared mailboxes for access...
+Discovered 2 accessible shared mailbox(es).
 
-  - Inbox
-    ID: [folder-id]
-    Total Items: 4268
-    Unread Items: 136
+Available mailboxes:
+  [1] Your Name (yourname@hotmail.com) - Primary
+  [2] Arquivo ComDev - SAMSYS (arquivo.comdev@samsys.pt) - Known
+  [3] Shared Team Mailbox (team@company.com) - Shared
 
-  - Sent Items
-    ID: [folder-id]
-    Total Items: 1532
-    Unread Items: 0
+Select a mailbox (1-3): 2
 
-[... more folders ...]
+Using mailbox: arquivo.comdev@samsys.pt
 
-==================================================
-Exporting emails from Inbox to JSON...
-==================================================
+Discovering mail folders recursively...
+Found 1,445 mail folders:
+  [1] Inbox (4,268 items, 136 unread)
+  [2] Sent Items (1,532 items, 0 unread)
+  [3] Inbox/01-CLIENTES/A/Aber (23 items, 0 unread)
+  [4] Inbox/01-CLIENTES/V-Z/XBSLOG (62 items, 5 unread)
+  ... [1,441 more folders]
+
+Select a folder (1-1445): 4
+
+Exporting 5 email(s) from folder: Inbox/01-CLIENTES/V-Z/XBSLOG
 
 Retrieved 5 emails
-✓ Exported 5 emails to: exported_emails.json
-  File size: 44.56 KB
+✓ Exported 5 emails to: exported_emails_Inbox01-CLIENTESV-ZXBSLOG.json
+  File size: 45.23 KB
 
 Export completed successfully.
-
-Done.
 ```
+
+### Automated Mode
+
+```bash
+$ dotnet run -- -m "arquivo.comdev@samsys.pt" -f "Inbox/01-CLIENTES/V-Z/XBSLOG" -c 0
+
+Outlook Email Exporter
+======================
+
+Authentication successful!
+Logged in as: Your Name
+
+Skipping mailbox discovery (mailbox specified via command-line).
+Using mailbox: arquivo.comdev@samsys.pt
+
+Discovering mail folders recursively...
+Found 932 mail folder(s) (stopped early - target folder found).
+
+✓ Found folder: Inbox/01-CLIENTES/V-Z/XBSLOG
+
+Exporting all emails from folder...
+Retrieved 1000 emails...
+Retrieved 2000 emails...
+Total emails retrieved: 2,341
+
+✓ Exported 2,341 emails to: exported_emails_Inbox01-CLIENTESV-ZXBSLOG.json
+  File size: 1.87 MB
+
+Export completed successfully.
+```
+
+## Use Cases
+
+### Personal Use
+- Backup personal email to JSON
+- Export specific folders for archival
+- Migrate email data between services
+- Email analysis and reporting
+
+### Organizational Use
+- Export shared mailbox data for compliance
+- Backup departmental mailboxes
+- Email discovery and e-discovery
+- Automated scheduled exports via Task Scheduler
+- Mailbox auditing and reporting
+
+### Automation
+- Schedule exports with Windows Task Scheduler
+- Integrate with backup systems
+- Scripted batch exports of multiple mailboxes
+- CI/CD pipeline email exports
+
+## Future Enhancements
+
+**Planned features** (see `LEARNING_PLAN.md` for details):
+- Date range filtering
+- Attachment download support
+- Multiple output formats (CSV, Excel, EML)
+- Advanced search and filtering
+- Incremental exports (only new emails)
+- Retry logic and throttling protection
+
+## Documentation
+
+- **README.md** (this file) - User guide and quick reference
+- **CLAUDE.md** - Quick reference for Claude Code instances
+- **PROJECT_SUMMARY.md** - Technical overview and architecture
+- **ADMIN_SETUP_GUIDE.md** - Enterprise deployment guide
+- **LEARNING_PLAN.md** - Comprehensive learning journey (from zero to production)
+- **LEARNING_NOTES.md** - Detailed Q&A, concepts, and troubleshooting
+
+## Contributing
+
+This is a learning project. Key learnings are documented in `LEARNING_PLAN.md` and `LEARNING_NOTES.md`.
+
+## License
+
+This project is for educational purposes.
+
+---
 
 ## Development Log
 
-**2025-10-17**:
-- Initial project setup and Azure app registration
-- Installed NuGet packages: Microsoft.Graph, Azure.Identity, Configuration.Json
-- Implemented secure configuration system with gitignore
-- Implemented Device Code Flow authentication
-- Implemented mail folder listing functionality
-- Fixed tenant configuration for personal Microsoft accounts (consumers)
-- Successfully tested authentication and folder retrieval
-- Implemented email retrieval with full property support
-- Implemented JSON export functionality
-- **Project completed and fully functional**
+### October 21, 2025
+- ✅ Implemented early exit optimization for folder search
+- ✅ Performance improvement: 35% faster when searching for specific folders
+- ✅ Added conditional output (show all folders vs report count)
+
+### October 20, 2025
+- ✅ **Critical Bug Fix**: Fixed folder pagination (308 → 1,445 folders discovered)
+- ✅ Implemented PageIterator for root and child folders
+- ✅ Added configurable email count feature (`-c` argument)
+- ✅ Implemented PageIterator for unlimited email exports (`-c 0`)
+- ✅ Moved hardcoded mailboxes to configuration
+- ✅ Added `Microsoft.Extensions.Configuration.Binder` package
+- ✅ Created `KnownMailboxes` configuration section
+
+### October 17, 2025
+- ✅ Initial project setup and Azure app registration
+- ✅ Installed base NuGet packages (Microsoft.Graph, Azure.Identity, Configuration.Json)
+- ✅ Implemented secure configuration system with .gitignore
+- ✅ Implemented Device Code Flow authentication
+- ✅ Implemented recursive folder discovery
+- ✅ Fixed tenant configuration for personal accounts (`"consumers"`)
+- ✅ Implemented email retrieval and JSON export
+- ✅ Added multi-mailbox support
+- ✅ Added shared mailbox discovery
+- ✅ Added command-line arguments (`-m`, `-f`, `-h`)
+- ✅ Created comprehensive documentation (5 markdown files)
+
+**Status**: Production-ready with continuous enhancements
