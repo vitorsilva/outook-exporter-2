@@ -321,54 +321,72 @@ try
         var childFolders = await graphClient.Users[selectedMailboxEmail]
             .MailFolders[parentFolderId]
             .ChildFolders
-            .GetAsync();
+            .GetAsync(requestConfig =>
+            {
+                requestConfig.QueryParameters.Top = 999; // Maximum per page
+            });
 
         if (childFolders?.Value != null)
         {
-            foreach (var folder in childFolders.Value)
-            {
-                var folderPath = string.IsNullOrEmpty(parentPath)
-                    ? folder.DisplayName ?? ""
-                    : $"{parentPath}/{folder.DisplayName}";
+            // Use PageIterator to handle all pages of child folders
+            var pageIterator = Microsoft.Graph.PageIterator<Microsoft.Graph.Models.MailFolder, Microsoft.Graph.Models.MailFolderCollectionResponse>
+                .CreatePageIterator(graphClient, childFolders, (folder) =>
+                {
+                    var folderPath = string.IsNullOrEmpty(parentPath)
+                        ? folder.DisplayName ?? ""
+                        : $"{parentPath}/{folder.DisplayName}";
 
+                    allFolders.Add((
+                        folder.Id ?? "",
+                        folder.DisplayName ?? "",
+                        folderPath,
+                        folder.TotalItemCount ?? 0,
+                        folder.UnreadItemCount ?? 0
+                    ));
+
+                    // Recursively get child folders
+                    if (folder.ChildFolderCount > 0)
+                    {
+                        GetFoldersRecursive(folder.Id ?? "", folderPath).Wait();
+                    }
+
+                    return true; // Continue iterating
+                });
+
+            await pageIterator.IterateAsync();
+        }
+    }
+
+    // Get root level folders first with pagination support
+    var rootFolders = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync(requestConfig =>
+    {
+        requestConfig.QueryParameters.Top = 999; // Maximum per page
+    });
+
+    if (rootFolders?.Value != null)
+    {
+        // Use PageIterator to handle all pages of root folders
+        var rootPageIterator = Microsoft.Graph.PageIterator<Microsoft.Graph.Models.MailFolder, Microsoft.Graph.Models.MailFolderCollectionResponse>
+            .CreatePageIterator(graphClient, rootFolders, (folder) =>
+            {
                 allFolders.Add((
                     folder.Id ?? "",
                     folder.DisplayName ?? "",
-                    folderPath,
+                    folder.DisplayName ?? "",
                     folder.TotalItemCount ?? 0,
                     folder.UnreadItemCount ?? 0
                 ));
 
-                // Recursively get child folders
+                // Get subfolders if any
                 if (folder.ChildFolderCount > 0)
                 {
-                    await GetFoldersRecursive(folder.Id ?? "", folderPath);
+                    GetFoldersRecursive(folder.Id ?? "", folder.DisplayName ?? "").Wait();
                 }
-            }
-        }
-    }
 
-    // Get root level folders first
-    var rootFolders = await graphClient.Users[selectedMailboxEmail].MailFolders.GetAsync();
+                return true; // Continue iterating
+            });
 
-    if (rootFolders?.Value != null)
-    {
-        foreach (var folder in rootFolders.Value)
-        {
-            allFolders.Add((
-                folder.Id ?? "",
-                folder.DisplayName ?? "",
-                folder.DisplayName ?? "",
-                folder.TotalItemCount ?? 0,
-                folder.UnreadItemCount ?? 0
-            ));
-
-            // Get subfolders if any
-            if (folder.ChildFolderCount > 0)
-            {
-                await GetFoldersRecursive(folder.Id ?? "", folder.DisplayName ?? "");
-            }
-        }
+        await rootPageIterator.IterateAsync();
     }
 
     string? selectedFolderId = null;

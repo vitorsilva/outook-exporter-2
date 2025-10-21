@@ -67,10 +67,12 @@ dotnet clean
 - Personal accounts work immediately; organizational accounts require admin consent
 
 ### Folder Enumeration
-The application recursively retrieves all mail folders using a nested function pattern:
-- `GetFoldersRecursive()` (Program.cs:284-314) - Recursively traverses folder hierarchy
+The application recursively retrieves all mail folders using a nested function pattern with full pagination support:
+- `GetFoldersRecursive()` (Program.cs:319-358) - Recursively traverses folder hierarchy with pagination
 - Builds folder paths as "Parent/Child/Grandchild"
-- Root folders retrieved first, then children enumerated recursively
+- Root folders retrieved first (Program.cs:360-390), then children enumerated recursively
+- Uses `PageIterator` to handle pagination and retrieve ALL folders (up to 999 per page)
+- Critical for mailboxes with many folders - ensures no folders are missed
 
 ### Exported Email Data
 JSON export includes all email properties except attachments:
