@@ -19,6 +19,8 @@ dotnet run --project OutlookExporter
 # Run with command-line arguments
 dotnet run --project OutlookExporter -- -m "mailbox@example.com" -f "Inbox"
 dotnet run --project OutlookExporter -- --mailbox "mailbox@example.com" --folder "Sent Items"
+dotnet run --project OutlookExporter -- -m "mailbox@example.com" -f "Inbox" -c 100  # Export 100 emails
+dotnet run --project OutlookExporter -- -m "mailbox@example.com" -f "Inbox" -c 0    # Export all emails
 
 # Show help
 dotnet run --project OutlookExporter -- --help
@@ -46,8 +48,8 @@ dotnet clean
 - Microsoft.Extensions.Configuration.Json (v9.0.10) - Configuration management
 
 ### Application Flow
-1. **Command-line argument parsing** (Program.cs:9-47) - Parses `-m/--mailbox` and `-f/--folder` arguments
-2. **Configuration loading** (Program.cs:49-59) - Loads appsettings.json and appsettings.Development.json
+1. **Command-line argument parsing** (Program.cs:9-52) - Parses `-m/--mailbox`, `-f/--folder`, and `-c/--count` arguments
+2. **Configuration loading** (Program.cs:69-79) - Loads appsettings.json and appsettings.Development.json
 3. **Authentication** (Program.cs:63-91) - Device Code Flow with user browser authentication
 4. **Mailbox discovery** (Program.cs:93-179) - Discovers available mailboxes (skipped if mailbox specified via CLI)
    - Primary mailbox
@@ -131,5 +133,18 @@ The entire application logic is in Program.cs using top-level statements. This i
 - Exported JSON files: `exported_emails_{folderName}.json` in OutlookExporter directory
 - Folder names are sanitized for filesystem compatibility (Program.cs:501)
 
-### Testing Considerations
-When testing, the application currently exports only 5 emails (Program.cs:434). This is by design to avoid API throttling during development.
+### Email Count and Pagination
+The application supports configurable email export counts:
+- Default: 5 emails (if no `-c/--count` argument provided)
+- Specific count: Use `-c <number>` to export that many emails (e.g., `-c 100`)
+- All emails: Use `-c 0` to export all emails with automatic pagination (Program.cs:450-503)
+
+When exporting all emails (`-c 0`), the application:
+- Uses maximum page size of 1000 emails per request
+- Implements automatic pagination using PageIterator
+- Shows progress updates every 1000 emails
+- May take several minutes for large folders
+
+**Performance Notes:**
+- Specific count (e.g., `-c 100`): Single API request
+- All emails in large folder: Multiple paginated requests, respects rate limits

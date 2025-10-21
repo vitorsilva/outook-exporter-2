@@ -9,6 +9,7 @@ Console.WriteLine("======================\n");
 // Parse command-line arguments
 string? argMailbox = null;
 string? argFolder = null;
+int? argCount = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -22,16 +23,31 @@ for (int i = 0; i < args.Length; i++)
         argFolder = args[i + 1];
         i++; // Skip next argument
     }
+    else if ((args[i] == "--count" || args[i] == "-c") && i + 1 < args.Length)
+    {
+        if (int.TryParse(args[i + 1], out int count))
+        {
+            argCount = count;
+        }
+        else
+        {
+            Console.WriteLine($"Error: Invalid count value '{args[i + 1]}'. Must be a number.");
+            return;
+        }
+        i++; // Skip next argument
+    }
     else if (args[i] == "--help" || args[i] == "-h")
     {
         Console.WriteLine("Usage: OutlookExporter [options]");
         Console.WriteLine("\nOptions:");
         Console.WriteLine("  -m, --mailbox <email>    Specify mailbox email address");
         Console.WriteLine("  -f, --folder <name>      Specify folder name to export");
+        Console.WriteLine("  -c, --count <number>     Number of emails to export (default: 5, use 0 for all)");
         Console.WriteLine("  -h, --help               Show this help message");
         Console.WriteLine("\nExamples:");
         Console.WriteLine("  OutlookExporter --mailbox user@example.com --folder \"Sent Items\"");
-        Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox");
+        Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -c 100");
+        Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -c 0  # Export all emails");
         return;
     }
 }
@@ -43,6 +59,10 @@ if (argMailbox != null)
 if (argFolder != null)
 {
     Console.WriteLine($"Command-line argument: Folder = {argFolder}");
+}
+if (argCount != null)
+{
+    Console.WriteLine($"Command-line argument: Count = {(argCount == 0 ? "all" : argCount.ToString())}");
 }
 Console.WriteLine();
 
@@ -427,19 +447,67 @@ try
     Console.WriteLine($"Exporting emails from {selectedFolderName} to JSON...");
     Console.WriteLine(new string('=', 50));
 
-    // Get emails with all properties except attachments
-    var messages = await graphClient.Users[selectedMailboxEmail].MailFolders[selectedFolderId ?? "Inbox"].Messages
-        .GetAsync(requestConfig =>
-        {
-            requestConfig.QueryParameters.Top = 5; // Get only 5 emails for testing
-        });
+    // Determine how many emails to export
+    int emailCount = argCount ?? 5; // Default to 5 if not specified
+    bool exportAll = argCount == 0;
 
-    if (messages?.Value != null && messages.Value.Count > 0)
+    var allMessages = new List<Microsoft.Graph.Models.Message>();
+
+    if (exportAll)
     {
-        Console.WriteLine($"\nRetrieved {messages.Value.Count} emails");
+        Console.WriteLine("\nExporting all emails (this may take a while)...");
+
+        // Get all emails with pagination
+        var messages = await graphClient.Users[selectedMailboxEmail].MailFolders[selectedFolderId ?? "Inbox"].Messages
+            .GetAsync(requestConfig =>
+            {
+                requestConfig.QueryParameters.Top = 1000; // Maximum per page
+            });
+
+        if (messages?.Value != null)
+        {
+            allMessages.AddRange(messages.Value);
+            Console.WriteLine($"Retrieved {allMessages.Count} emails...");
+
+            // Handle pagination if there are more results
+            var pageIterator = Microsoft.Graph.PageIterator<Microsoft.Graph.Models.Message, Microsoft.Graph.Models.MessageCollectionResponse>
+                .CreatePageIterator(graphClient, messages, (msg) =>
+                {
+                    allMessages.Add(msg);
+                    if (allMessages.Count % 1000 == 0)
+                    {
+                        Console.WriteLine($"Retrieved {allMessages.Count} emails...");
+                    }
+                    return true; // Continue iterating
+                });
+
+            await pageIterator.IterateAsync();
+            Console.WriteLine($"\nTotal retrieved: {allMessages.Count} emails");
+        }
+    }
+    else
+    {
+        Console.WriteLine($"\nExporting up to {emailCount} emails...");
+
+        // Get specified number of emails
+        var messages = await graphClient.Users[selectedMailboxEmail].MailFolders[selectedFolderId ?? "Inbox"].Messages
+            .GetAsync(requestConfig =>
+            {
+                requestConfig.QueryParameters.Top = emailCount;
+            });
+
+        if (messages?.Value != null)
+        {
+            allMessages.AddRange(messages.Value);
+        }
+    }
+
+    if (allMessages.Count > 0)
+    {
+        Console.WriteLine($"\nRetrieved {allMessages.Count} emails");
 
         // Convert to anonymous objects for JSON export (all properties except attachments)
-        var emailData = messages.Value.Select(msg => new
+        var emailData = allMessages.Select(msg => new
         {
             Id = msg.Id,
             Subject = msg.Subject,
