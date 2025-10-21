@@ -383,6 +383,7 @@ try
 
     // Get all folders including nested subfolders
     var allFolders = new List<(string Id, string DisplayName, string Path, int TotalItems, int UnreadItems)>();
+    bool folderFound = false; // Flag to stop searching when target folder is found
 
     async Task GetFoldersRecursive(string parentFolderId, string parentPath)
     {
@@ -400,6 +401,8 @@ try
             var pageIterator = Microsoft.Graph.PageIterator<Microsoft.Graph.Models.MailFolder, Microsoft.Graph.Models.MailFolderCollectionResponse>
                 .CreatePageIterator(graphClient, childFolders, (folder) =>
                 {
+                    if (folderFound) return false; // Stop if we already found the target folder
+
                     var folderPath = string.IsNullOrEmpty(parentPath)
                         ? folder.DisplayName ?? ""
                         : $"{parentPath}/{folder.DisplayName}";
@@ -412,13 +415,22 @@ try
                         folder.UnreadItemCount ?? 0
                     ));
 
+                    // Check if this is the target folder (if specified via CLI)
+                    if (argFolder != null &&
+                        (folderPath.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
+                         folder.DisplayName?.Equals(argFolder, StringComparison.OrdinalIgnoreCase) == true))
+                    {
+                        folderFound = true;
+                        return false; // Stop searching
+                    }
+
                     // Recursively get child folders
-                    if (folder.ChildFolderCount > 0)
+                    if (folder.ChildFolderCount > 0 && !folderFound)
                     {
                         GetFoldersRecursive(folder.Id ?? "", folderPath).Wait();
                     }
 
-                    return true; // Continue iterating
+                    return !folderFound; // Continue iterating only if not found
                 });
 
             await pageIterator.IterateAsync();
@@ -437,6 +449,8 @@ try
         var rootPageIterator = Microsoft.Graph.PageIterator<Microsoft.Graph.Models.MailFolder, Microsoft.Graph.Models.MailFolderCollectionResponse>
             .CreatePageIterator(graphClient, rootFolders, (folder) =>
             {
+                if (folderFound) return false; // Stop if we already found the target folder
+
                 allFolders.Add((
                     folder.Id ?? "",
                     folder.DisplayName ?? "",
@@ -445,13 +459,21 @@ try
                     folder.UnreadItemCount ?? 0
                 ));
 
+                // Check if this is the target folder (if specified via CLI)
+                if (argFolder != null &&
+                    folder.DisplayName?.Equals(argFolder, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    folderFound = true;
+                    return false; // Stop searching
+                }
+
                 // Get subfolders if any
-                if (folder.ChildFolderCount > 0)
+                if (folder.ChildFolderCount > 0 && !folderFound)
                 {
                     GetFoldersRecursive(folder.Id ?? "", folder.DisplayName ?? "").Wait();
                 }
 
-                return true; // Continue iterating
+                return !folderFound; // Continue iterating only if not found
             });
 
         await rootPageIterator.IterateAsync();
@@ -462,15 +484,23 @@ try
 
     if (allFolders.Count > 0)
     {
-        Console.WriteLine($"\nFound {allFolders.Count} mail folder(s) (including subfolders):\n");
-
-        for (int i = 0; i < allFolders.Count; i++)
+        // Only print all folders if no specific folder was requested or if we're in interactive mode
+        if (argFolder == null)
         {
-            var folder = allFolders[i];
-            Console.WriteLine($"  [{i + 1}] {folder.Path}");
-            Console.WriteLine($"      Total Items: {folder.TotalItems}");
-            Console.WriteLine($"      Unread Items: {folder.UnreadItems}");
-            Console.WriteLine();
+            Console.WriteLine($"\nFound {allFolders.Count} mail folder(s) (including subfolders):\n");
+
+            for (int i = 0; i < allFolders.Count; i++)
+            {
+                var folder = allFolders[i];
+                Console.WriteLine($"  [{i + 1}] {folder.Path}");
+                Console.WriteLine($"      Total Items: {folder.TotalItems}");
+                Console.WriteLine($"      Unread Items: {folder.UnreadItems}");
+                Console.WriteLine();
+            }
+        }
+        else
+        {
+            Console.WriteLine($"\nFound {allFolders.Count} mail folder(s) (stopped early - target folder found).");
         }
 
         Console.WriteLine("\nFolder listing completed successfully.");
