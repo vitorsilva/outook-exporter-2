@@ -125,7 +125,15 @@ These mailboxes are added to the list with type "Known" during mailbox discovery
 ## Important Implementation Details
 
 ### Mailbox Discovery Behavior
-Mailbox discovery (Program.cs:106-179) is ONLY executed when NO mailbox is specified via command-line argument. This prevents unnecessary API calls when the target mailbox is already known.
+Mailbox discovery (Program.cs:126-253) is ONLY executed when NO mailbox is specified via command-line argument. This prevents unnecessary API calls when the target mailbox is already known.
+
+The discovery process includes:
+1. Primary mailbox
+2. Known mailboxes from configuration
+3. Shared/delegated mailboxes (via Azure AD query)
+4. **Archive mailboxes** - Automatically discovers Online Archive mailboxes for all accessible mailboxes (Program.cs:211-253)
+
+Archive mailboxes are accessed using the naming pattern: `{localpart}-archive@{domain}` and appear in the mailbox list with "(Archive)" suffix.
 
 ### Folder Matching Logic
 When a folder is specified via CLI argument, the application searches by both DisplayName and full Path (case-insensitive). If not found, it lists available folders and exits (Program.cs:358-387).

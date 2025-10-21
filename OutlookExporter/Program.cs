@@ -207,6 +207,74 @@ try
             Console.WriteLine($"Error during shared mailbox discovery: {ex.Message}");
             Console.WriteLine("You can still manually enter shared mailbox addresses below.");
         }
+
+        // Discover archive mailboxes for accessible mailboxes
+        Console.WriteLine("\nAttempting to discover archive mailboxes...");
+        var archiveCount = 0;
+        var mailboxesToCheck = new List<(string DisplayName, string Email, string Type)>(availableMailboxes);
+
+        foreach (var mailbox in mailboxesToCheck)
+        {
+            try
+            {
+                Console.Write($"  Checking for archive: {mailbox.DisplayName}...");
+
+                // Try multiple archive naming patterns
+                string[] archivePatterns = new[]
+                {
+                    $"{mailbox.Email.Split('@')[0]}-archive@{mailbox.Email.Split('@')[1]}",  // Standard pattern
+                    $"{mailbox.Email.Split('@')[0]}-Archive@{mailbox.Email.Split('@')[1]}",  // Capital A
+                    $"{mailbox.Email.Split('@')[0]}.archive@{mailbox.Email.Split('@')[1]}",  // Dot separator
+                    $"archive.{mailbox.Email}",  // Prefix pattern
+                };
+
+                bool found = false;
+                foreach (var archiveEmail in archivePatterns)
+                {
+                    try
+                    {
+                        var archiveTest = await graphClient.Users[archiveEmail].MailFolders.GetAsync(requestConfig =>
+                        {
+                            requestConfig.QueryParameters.Top = 1;
+                        });
+
+                        if (archiveTest?.Value != null)
+                        {
+                            availableMailboxes.Add(($"{mailbox.DisplayName} (Archive)", archiveEmail, "Archive"));
+                            archiveCount++;
+                            Console.WriteLine($" ✓ Archive found: {archiveEmail}");
+                            found = true;
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // Try next pattern
+                        continue;
+                    }
+                }
+
+                if (!found)
+                {
+                    Console.WriteLine(" ✗ No archive");
+                }
+            }
+            catch
+            {
+                Console.WriteLine(" ✗ Error checking");
+            }
+        }
+
+        if (archiveCount > 0)
+        {
+            Console.WriteLine($"\nDiscovered {archiveCount} archive mailbox(es).");
+        }
+        else
+        {
+            Console.WriteLine("\nNo archive mailboxes found.");
+            Console.WriteLine("Note: If you have an Online Archive, you may need to access it manually.");
+            Console.WriteLine("Try using option [0] to enter the archive email address directly.");
+        }
     }
     else
     {
