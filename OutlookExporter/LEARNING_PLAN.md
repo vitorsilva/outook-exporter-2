@@ -1779,43 +1779,73 @@ dotnet build
 
 ## What's Next?
 
+### Completed Enhancements (October 2025)
+
+1. ✅ **Configurable Email Count** (October 20, 2025)
+   - Command-line argument: `-c` / `--count`
+   - Three modes:
+     - Default: 5 emails (no argument)
+     - Specific count: `-c 100` exports 100 emails
+     - All emails: `-c 0` exports entire folder using pagination
+   - Implemented PageIterator for large datasets
+   - Progress indicators for large exports
+
+2. ✅ **Configuration-based Known Mailboxes** (October 20, 2025)
+   - Removed hardcoded mailbox from code
+   - Added `KnownMailboxes` section to appsettings.json
+   - Supports multiple known mailboxes
+   - Better separation of code and configuration
+
+3. ✅ **Folder Pagination Fix** (October 20, 2025)
+   - **Critical Bug Fix**: Was only retrieving first page of folders
+   - Added `Top = 999` parameter to folder requests
+   - Implemented PageIterator for root folders and child folders
+   - Result: 308 → 1,445 folders discovered (4.7x increase!)
+   - Ensures ALL folders are discovered, not just first page
+
+4. ✅ **Folder Discovery Early Exit Optimization** (October 21, 2025)
+   - Stop searching once target folder is found
+   - Added `folderFound` flag to halt enumeration
+   - Skip printing all folders when searching for specific folder
+   - Performance improvement: 932 folders vs 1,445 (35% faster)
+   - Significantly speeds up automated/scripted exports
+
 ### Future Enhancements
 
 1. **Interactive Folder Selection**
-   - Let user choose which folder to export
    - Menu system for folder selection
-   - Export multiple folders
+   - Export multiple folders in one run
 
 2. **Date Range Filtering**
    - Filter by date received
    - Export only recent emails
    - Archive old emails separately
 
-3. **Pagination**
-   - Handle large mailboxes (thousands of emails)
-   - Process in batches
-   - Progress indicators
-
-4. **Attachment Support**
+3. **Attachment Support**
    - Download attachments
    - Save to separate folder
    - Include attachment metadata
 
-5. **Multiple Output Formats**
+4. **Multiple Output Formats**
    - CSV export
    - XML export
    - Individual .eml files
    - Excel workbook
 
-6. **Scheduled Exports**
+5. **Scheduled Exports**
    - Run on schedule (Windows Task Scheduler)
    - Incremental exports (only new emails)
    - Email notifications on completion
 
-7. **Search/Filter**
+6. **Search/Filter**
    - Filter by sender
    - Filter by subject keywords
    - Filter by importance/category
+
+7. **Retry Logic and Throttling Protection**
+   - Implement exponential backoff for rate limit errors
+   - Request count tracking
+   - Proactive throttling before hitting limits
 
 ### Experimental Ideas for Future Exploration
 

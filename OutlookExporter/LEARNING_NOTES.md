@@ -2563,6 +2563,457 @@ catch (ServiceException ex)
 
 ---
 
+## Recent Session Learnings (October 20-21, 2025)
+
+### Enhancement 1: Configurable Email Count with Pagination
+
+#### Q: How do you implement configurable export limits with support for unlimited exports?
+
+**A: Command-Line Arguments + PageIterator Pattern**
+
+**The Challenge:**
+- Hardcoded limit of 5 emails wasn't flexible
+- Users need different limits for different scenarios
+- Large folders need pagination to export all emails
+
+**The Solution - Three Modes:**
+
+**Mode 1: Default (5 emails)**
+```csharp
+int emailCount = argCount ?? 5;  // Default to 5 if not specified
+```
+
+**Mode 2: Specific Count**
+```csharp
+// Usage: dotnet run -- -c 100
+var messages = await graphClient.Users[email]
+    .MailFolders[folderId]
+    .Messages
+    .GetAsync(requestConfig =>
+    {
+        requestConfig.QueryParameters.Top = emailCount;
+    });
+```
+
+**Mode 3: All Emails (Pagination)**
+```csharp
+// Usage: dotnet run -- -c 0
+bool exportAll = argCount == 0;
+
+if (exportAll)
+{
+    var allMessages = new List<Microsoft.Graph.Models.Message>();
+
+    var pageIterator = Microsoft.Graph.PageIterator<
+        Microsoft.Graph.Models.Message,
+        Microsoft.Graph.Models.MessageCollectionResponse>
+        .CreatePageIterator(
+            graphClient,
+            messages,
+            (msg) =>
+            {
+                allMessages.Add(msg);
+
+                // Progress indicator for large datasets
+                if (allMessages.Count % 1000 == 0)
+                {
+                    Console.WriteLine($"Retrieved {allMessages.Count} emails...");
+                }
+
+                return true;  // Continue iterating
+            });
+
+    await pageIterator.IterateAsync();
+
+    Console.WriteLine($"Total emails retrieved: {allMessages.Count}");
+}
+```
+
+**How PageIterator Works:**
+1. Makes initial request (gets first page)
+2. Checks for `@odata.nextLink` in response
+3. If present, automatically fetches next page
+4. Calls callback function for each item
+5. Continues until no more pages
+
+**Key Benefits:**
+- ✅ Handles any dataset size
+- ✅ Memory efficient (processes in chunks)
+- ✅ Automatic pagination handling
+- ✅ Progress tracking for large exports
+- ✅ Flexible modes for different use cases
+
+**Performance Characteristics:**
+- Default mode: 1 request (5 emails)
+- Specific count (100): 1 request if ≤ page size
+- All mode (1000s): Multiple requests with automatic pagination
+
+**What I Learned:**
+- PageIterator is the Graph SDK's pagination helper
+- Callback pattern allows processing items as they arrive
+- Return `true` from callback to continue, `false` to stop
+- Progress indicators improve UX for long operations
+- `-c 0` is intuitive convention for "all items"
+
+### Enhancement 2: Configuration Binding in .NET
+
+#### Q: How do you bind complex configuration objects from JSON to C# classes?
+
+**A: Microsoft.Extensions.Configuration.Binder Package**
+
+**The Problem:**
+- Hardcoded mailboxes in source code
+- Difficult to add/remove mailboxes
+- Configuration and code mixed together
+
+**The Solution - Typed Configuration:**
+
+**Step 1: Define Configuration Model**
+```csharp
+public class KnownMailbox
+{
+    public string? DisplayName { get; set; }
+    public string? Email { get; set; }
+}
+```
+
+**Step 2: Add Configuration**
+```json
+{
+  "KnownMailboxes": [
+    {
+      "DisplayName": "Arquivo ComDev - SAMSYS",
+      "Email": "arquivo.comdev@samsys.pt"
+    },
+    {
+      "DisplayName": "Shared Team Mailbox",
+      "Email": "team@company.com"
+    }
+  ]
+}
+```
+
+**Step 3: Install Binder Package**
+```bash
+dotnet add package Microsoft.Extensions.Configuration.Binder
+```
+
+**Step 4: Bind Configuration to Objects**
+```csharp
+var knownMailboxesSection = configuration.GetSection("KnownMailboxes");
+
+if (knownMailboxesSection.Exists())
+{
+    // .Get<T>() requires Configuration.Binder package
+    var knownMailboxes = knownMailboxesSection.Get<List<KnownMailbox>>();
+
+    if (knownMailboxes != null && knownMailboxes.Count > 0)
+    {
+        Console.WriteLine($"Adding {knownMailboxes.Count} known mailbox(es) from configuration...");
+
+        foreach (var mailbox in knownMailboxes)
+        {
+            if (!string.IsNullOrEmpty(mailbox.Email))
+            {
+                availableMailboxes.Add((
+                    mailbox.DisplayName ?? mailbox.Email,
+                    mailbox.Email,
+                    "Known"
+                ));
+            }
+        }
+    }
+}
+```
+
+**Why Configuration.Binder?**
+- Base `Microsoft.Extensions.Configuration` only provides string indexers
+- `.Get<T>()` extension method comes from Configuration.Binder
+- Handles type conversion automatically
+- Supports complex nested objects
+- Validates structure at runtime
+
+**Alternative Approaches:**
+
+**Without Binder (Manual Parsing):**
+```csharp
+var mailboxes = configuration.GetSection("KnownMailboxes").GetChildren();
+foreach (var mailbox in mailboxes)
+{
+    var displayName = mailbox["DisplayName"];
+    var email = mailbox["Email"];
+    // Manual parsing - more code, less type safety
+}
+```
+
+**With Binder (Automatic):**
+```csharp
+var mailboxes = configuration.GetSection("KnownMailboxes")
+    .Get<List<KnownMailbox>>();  // Type-safe, automatic!
+```
+
+**What I Learned:**
+- Configuration.Binder is separate package from Configuration
+- `.Get<T>()` provides strongly-typed configuration
+- Supports lists, nested objects, complex types
+- Fails gracefully if configuration missing
+- Better than manual parsing for maintainability
+
+### Enhancement 3: Critical Bug - Folder Pagination Missing
+
+#### Q: Why were only ~10-20 folders discovered instead of 1,445?
+
+**A: Graph API Default Pagination Limit**
+
+**The Investigation:**
+
+**Symptom:**
+```
+User: "Export from 'xbslog' folder"
+App: "Folder not found"
+App: "Found 308 folders"
+Expected: 1,445 folders
+```
+
+**Root Cause Analysis:**
+
+**What Was Happening:**
+```csharp
+// Original code - NO pagination handling
+var childFolders = await graphClient.Users[email]
+    .MailFolders[parentId]
+    .ChildFolders
+    .GetAsync();
+
+// Only got first page! (~10-20 folders per page)
+// @odata.nextLink ignored → remaining folders never retrieved
+```
+
+**Why This Happened:**
+- Microsoft Graph API returns paginated results by default
+- Default page size: 10-20 items
+- Response includes `@odata.nextLink` for next page
+- Without handling pagination, only first page retrieved
+
+**The Fix - Two-Part Solution:**
+
+**Part 1: Increase Page Size**
+```csharp
+var childFolders = await graphClient.Users[email]
+    .MailFolders[parentId]
+    .ChildFolders
+    .GetAsync(requestConfig =>
+    {
+        requestConfig.QueryParameters.Top = 999;  // Maximum per page
+    });
+```
+
+**Part 2: Implement PageIterator for Multiple Pages**
+```csharp
+var pageIterator = Microsoft.Graph.PageIterator<
+    Microsoft.Graph.Models.MailFolder,
+    Microsoft.Graph.Models.MailFolderCollectionResponse>
+    .CreatePageIterator(
+        graphClient,
+        childFolders,
+        (folder) =>
+        {
+            // Process each folder
+            var folderPath = string.IsNullOrEmpty(parentPath)
+                ? folder.DisplayName ?? ""
+                : $"{parentPath}/{folder.DisplayName}";
+
+            allFolders.Add((
+                folder.Id ?? "",
+                folder.DisplayName ?? "",
+                folderPath,
+                folder.TotalItemCount ?? 0,
+                folder.UnreadItemCount ?? 0
+            ));
+
+            // Recursively get child folders
+            if (folder.ChildFolderCount > 0)
+            {
+                GetFoldersRecursive(folder.Id ?? "", folderPath).Wait();
+            }
+
+            return true;  // Continue to next page
+        });
+
+await pageIterator.IterateAsync();
+```
+
+**Results:**
+```
+Before: 308 folders (only first page of each level)
+After:  1,445 folders (all pages, all levels)
+
+Increase: 4.7x more folders discovered!
+```
+
+**Critical Learning:**
+- **ALWAYS implement pagination** for collection endpoints
+- Default page size is small (10-20 items)
+- Missing folders = missing pagination
+- `Top = 999` reduces requests but doesn't eliminate pagination need
+- PageIterator is essential for complete data retrieval
+
+**When to Suspect Pagination Issues:**
+- Collection seems incomplete
+- Consistent number of items returned (e.g., always 10)
+- Items missing that should exist
+- Response has `@odata.nextLink` property
+
+**How to Avoid:**
+- Use PageIterator for ALL collection retrievals
+- Test with large datasets
+- Check response for `@odata.nextLink`
+- Don't assume single page contains all data
+
+### Enhancement 4: Performance Optimization - Early Exit
+
+#### Q: How can you optimize folder discovery when searching for a specific folder?
+
+**A: Early Exit Pattern with Boolean Flag**
+
+**The Problem:**
+```
+Searching for folder "xbslog"
+Discovered 1,445 folders total
+Found "xbslog" at folder #932
+But continued searching through remaining 513 folders (wasted time!)
+```
+
+**The Solution - Early Exit:**
+
+**Step 1: Add Flag**
+```csharp
+bool folderFound = false;
+```
+
+**Step 2: Check Flag Before Recursion**
+```csharp
+async Task GetFoldersRecursive(string parentFolderId, string parentPath)
+{
+    // Skip if already found
+    if (folderFound) return;
+
+    var childFolders = await graphClient.Users[selectedMailboxEmail]
+        .MailFolders[parentFolderId]
+        .ChildFolders
+        .GetAsync(requestConfig =>
+        {
+            requestConfig.QueryParameters.Top = 999;
+        });
+
+    if (childFolders?.Value != null)
+    {
+        var pageIterator = Microsoft.Graph.PageIterator<...>
+            .CreatePageIterator(
+                graphClient,
+                childFolders,
+                (folder) =>
+                {
+                    // Stop if already found
+                    if (folderFound) return false;
+
+                    // ... process folder ...
+
+                    // Check if this is the target
+                    if (argFolder != null &&
+                        (folderPath.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
+                         folder.DisplayName?.Equals(argFolder, StringComparison.OrdinalIgnoreCase) == true))
+                    {
+                        folderFound = true;
+                        return false;  // Stop iterating
+                    }
+
+                    // Recurse only if not found
+                    if (folder.ChildFolderCount > 0 && !folderFound)
+                    {
+                        GetFoldersRecursive(folder.Id ?? "", folderPath).Wait();
+                    }
+
+                    return !folderFound;  // Continue only if not found
+                });
+
+        await pageIterator.IterateAsync();
+    }
+}
+```
+
+**Step 3: Conditional Output**
+```csharp
+if (argFolder == null)
+{
+    // Interactive mode - show all folders
+    Console.WriteLine($"\nFound {allFolders.Count} mail folders:");
+    foreach (var folder in allFolders)
+    {
+        Console.WriteLine($"  [{allFolders.IndexOf(folder) + 1}] {folder.Path}");
+    }
+}
+else
+{
+    // Search mode - just report count
+    Console.WriteLine($"\nFound {allFolders.Count} mail folder(s) (stopped early - target folder found).");
+}
+```
+
+**Performance Results:**
+```
+Without Early Exit:
+- Folders enumerated: 1,445 (all)
+- Time: ~5-6 seconds
+
+With Early Exit:
+- Folders enumerated: 932 (stopped when found)
+- Time: ~3-4 seconds
+- Improvement: 35% faster
+```
+
+**Key Techniques:**
+
+**1. Boolean Flag Pattern**
+- Simple and effective
+- Shared across recursive calls
+- Check at entry and during iteration
+
+**2. PageIterator Return Value**
+- `return true` → Continue to next item
+- `return false` → Stop iteration immediately
+
+**3. Conditional Recursion**
+- Only recurse if target not found
+- Check flag before expensive operations
+
+**4. Short-Circuit Evaluation**
+```csharp
+if (folder.ChildFolderCount > 0 && !folderFound)
+    // If folderFound=true, doesn't evaluate ChildFolderCount
+    // If ChildFolderCount=0, doesn't check folderFound
+```
+
+**When to Use Early Exit:**
+- Searching for specific item in large collection
+- First match is sufficient (not need all)
+- Expensive operation (API calls, disk I/O)
+- Recursive/nested searches
+
+**When NOT to Use:**
+- Need all items anyway
+- Processing has side effects needed for all items
+- Collection is small (overhead not worth it)
+
+**What I Learned:**
+- Early exit significantly improves performance
+- Boolean flags work well for recursive functions
+- PageIterator respects `return false` immediately
+- Conditional output based on mode improves UX
+- Optimization matters for automated/scheduled tasks
+
+---
+
 ## Key Takeaways
 
 ### Azure AD & Authentication
