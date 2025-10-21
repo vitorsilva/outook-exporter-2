@@ -88,9 +88,27 @@ JSON export includes all email properties except attachments:
   "AzureAd": {
     "ClientId": "your-client-id-here",
     "TenantId": "consumers"  // or specific tenant ID for organizational accounts
-  }
+  },
+  "KnownMailboxes": [
+    {
+      "DisplayName": "Example Shared Mailbox",
+      "Email": "shared@example.com"
+    }
+  ]
 }
 ```
+
+### KnownMailboxes (Optional)
+The `KnownMailboxes` configuration allows you to specify mailboxes that should always appear in the mailbox selection list. This is useful for:
+- Delegated mailboxes that don't appear in automatic discovery
+- Frequently accessed shared mailboxes
+- Organization-specific mailboxes
+
+Each entry requires:
+- `DisplayName`: Friendly name shown in the mailbox list
+- `Email`: Email address of the mailbox
+
+These mailboxes are added to the list with type "Known" during mailbox discovery (Program.cs:123-139).
 
 ### Account Type Configuration
 - **Personal accounts (Hotmail/Outlook.com)**: TenantId = "consumers"
@@ -110,8 +128,8 @@ Mailbox discovery (Program.cs:106-179) is ONLY executed when NO mailbox is speci
 ### Folder Matching Logic
 When a folder is specified via CLI argument, the application searches by both DisplayName and full Path (case-insensitive). If not found, it lists available folders and exits (Program.cs:358-387).
 
-### Hardcoded Mailbox
-The application includes a hardcoded known mailbox: "arquivo.comdev@samsys.pt" (Program.cs:104). This should be updated or removed when deploying to different environments.
+### Known Mailboxes Configuration
+The application supports configuring known mailboxes via `appsettings.json` in the `KnownMailboxes` array. These mailboxes appear in the mailbox selection list with type "Known". This is useful for delegated mailboxes that don't appear in automatic discovery.
 
 ### Microsoft Graph API Rate Limits
 The application is subject to Microsoft Graph API throttling limits:

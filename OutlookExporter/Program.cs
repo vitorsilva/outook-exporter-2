@@ -120,8 +120,23 @@ try
     // Add primary mailbox
     availableMailboxes.Add((user?.DisplayName ?? "Primary Mailbox", user?.Mail ?? user?.UserPrincipalName ?? "", "Primary"));
 
-    // Add known mailbox
-    availableMailboxes.Add(("Arquivo ComDev - SAMSYS", "arquivo.comdev@samsys.pt", "Delegated"));
+    // Add known mailboxes from configuration
+    var knownMailboxesSection = configuration.GetSection("KnownMailboxes");
+    if (knownMailboxesSection.Exists())
+    {
+        var knownMailboxes = knownMailboxesSection.Get<List<KnownMailbox>>();
+        if (knownMailboxes != null && knownMailboxes.Count > 0)
+        {
+            Console.WriteLine($"Adding {knownMailboxes.Count} known mailbox(es) from configuration...");
+            foreach (var mailbox in knownMailboxes)
+            {
+                if (!string.IsNullOrEmpty(mailbox.Email))
+                {
+                    availableMailboxes.Add((mailbox.DisplayName ?? mailbox.Email, mailbox.Email, "Known"));
+                }
+            }
+        }
+    }
 
     // Only discover mailboxes if not specified via command-line argument
     if (argMailbox == null)
@@ -590,3 +605,10 @@ catch (Exception ex)
 }
 
 Console.WriteLine("\nDone.");
+
+// Configuration model for known mailboxes
+public class KnownMailbox
+{
+    public string? DisplayName { get; set; }
+    public string? Email { get; set; }
+}
