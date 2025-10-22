@@ -66,17 +66,20 @@ dotnet clean
 - Microsoft.Extensions.Configuration.Json (v9.0.10) - Configuration management
 
 ### Application Flow
-1. **Command-line argument parsing** (Program.cs:9-52) - Parses `-m/--mailbox`, `-f/--folder`, and `-c/--count` arguments
-2. **Configuration loading** (Program.cs:69-79) - Loads appsettings.json and appsettings.Development.json
-3. **Authentication** (Program.cs:63-91) - Device Code Flow with user browser authentication
-4. **Mailbox discovery** (Program.cs:93-179) - Discovers available mailboxes (skipped if mailbox specified via CLI)
+1. **Command-line argument parsing** (Program.cs:9-70) - Parses `-m/--mailbox`, `-f/--folder`, `-c/--count`, and `-o/--format` arguments
+2. **Configuration loading** (Program.cs:92-96) - Loads appsettings.json and appsettings.Development.json
+3. **Authentication** (Program.cs:103-133) - Device Code Flow with user browser authentication
+4. **Export loop initialization** (Program.cs:135-141) - Sets up multi-cycle export capability
+5. **Mailbox discovery** (Program.cs:226-400) - Discovers available mailboxes (skipped if mailbox specified via CLI)
    - Primary mailbox
-   - Known hardcoded mailbox (arquivo.comdev@samsys.pt)
+   - Known mailboxes from configuration
    - Shared/delegated mailboxes via Azure AD query
-5. **Mailbox selection** (Program.cs:181-274) - Interactive or CLI-based selection
-6. **Folder retrieval** (Program.cs:276-423) - Recursive folder enumeration including subfolders
-7. **Folder selection** (Program.cs:339-418) - Interactive or CLI-based selection
-8. **Email export** (Program.cs:425-511) - Retrieves 5 emails and exports to JSON
+   - Archive mailboxes (heuristic detection)
+6. **Mailbox selection** (Program.cs:402-494) - Interactive or CLI-based selection
+7. **Folder retrieval** (Program.cs:497-626) - Recursive folder enumeration including subfolders with pagination
+8. **Folder selection** (Program.cs:628-687) - Interactive or CLI-based selection
+9. **Export parameters prompt** (Program.cs:725-774) - In interactive mode, prompts for email count and format
+10. **Email export** (Program.cs:940-1080) - Exports emails with configurable count and format (JSON/HTML/both)
 
 ### Authentication Architecture
 - Uses Device Code Flow (OAuth 2.0) - no client secrets
@@ -221,6 +224,27 @@ The discovery process includes:
 
 **Recommendation:** If reliable archive detection is critical, use Exchange Online PowerShell to export archive information to a configuration file, then load it in this application.
 
+### Testing Archive Access with ArchiveGuid
+
+**Experimental Feature:** The application includes a test utility to verify if ArchiveGuid can be used to access archives:
+
+```bash
+dotnet run --project OutlookExporter -- --test-archive <archive-guid> -m <primary-email>
+```
+
+**Example:**
+```bash
+dotnet run --project OutlookExporter -- --test-archive d88b8107-7f31-4e0a-999b-723a8ba54ac0 -m Grupo.ComDev@samsys.pt
+```
+
+**Test Results (2025-10-22):**
+- ❌ ArchiveGuid is **NOT** a valid user identifier in Graph API
+- ❌ ArchiveMsgFolderRoot fails with: *"The item exists in an archive mailbox"*
+- ✅ This confirms Graph API **knows** about archives but **deliberately blocks** access
+- ✅ Error message reveals that blocking is intentional, not a technical limitation
+
+See `ARCHIVE_GUID_TEST_RESULTS.md` for detailed test findings and error messages.
+
 ### Folder Matching Logic
 When a folder is specified via CLI argument, the application searches by both DisplayName and full Path (case-insensitive). If not found, it lists available folders and exits (Program.cs:358-387).
 
@@ -249,9 +273,9 @@ The entire application logic is in Program.cs using top-level statements. This i
 
 ### Email Count and Pagination
 The application supports configurable email export counts:
-- Default: 5 emails (if no `-c/--count` argument provided)
-- Specific count: Use `-c <number>` to export that many emails (e.g., `-c 100`)
-- All emails: Use `-c 0` to export all emails with automatic pagination (Program.cs:450-503)
+- **Interactive mode**: Prompts user for count (default: 5 if Enter is pressed, or 0 for all) (Program.cs:725-774)
+- **CLI mode**: Use `-c <number>` to export that many emails (e.g., `-c 100`)
+- **Export all**: Use `-c 0` (or enter `0` when prompted) to export all emails with automatic pagination
 
 When exporting all emails (`-c 0`), the application:
 - Uses maximum page size of 1000 emails per request

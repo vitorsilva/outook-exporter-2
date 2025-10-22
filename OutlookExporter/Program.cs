@@ -11,6 +11,8 @@ string? argMailbox = null;
 string? argFolder = null;
 int? argCount = null;
 string? argFormat = null;
+bool testArchiveGuid = false;
+string? testArchiveGuidValue = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -51,21 +53,31 @@ for (int i = 0; i < args.Length; i++)
         }
         i++; // Skip next argument
     }
+    else if (args[i] == "--test-archive" && i + 1 < args.Length)
+    {
+        testArchiveGuid = true;
+        testArchiveGuidValue = args[i + 1];
+        i++; // Skip next argument
+    }
     else if (args[i] == "--help" || args[i] == "-h")
     {
         Console.WriteLine("Usage: OutlookExporter [options]");
         Console.WriteLine("\nOptions:");
-        Console.WriteLine("  -m, --mailbox <email>    Specify mailbox email address");
-        Console.WriteLine("  -f, --folder <name>      Specify folder name to export");
-        Console.WriteLine("  -c, --count <number>     Number of emails to export (default: 5, use 0 for all)");
-        Console.WriteLine("  -o, --format <format>    Output format: json, html, or both (default: json)");
-        Console.WriteLine("  -h, --help               Show this help message");
+        Console.WriteLine("  -m, --mailbox <email>      Specify mailbox email address");
+        Console.WriteLine("  -f, --folder <name>        Specify folder name to export");
+        Console.WriteLine("  -c, --count <number>       Number of emails to export (default: 5, use 0 for all)");
+        Console.WriteLine("  -o, --format <format>      Output format: json, html, or both (default: json)");
+        Console.WriteLine("  --test-archive <guid>      Test if ArchiveGuid can access archive mailbox");
+        Console.WriteLine("  -h, --help                 Show this help message");
         Console.WriteLine("\nExamples:");
         Console.WriteLine("  OutlookExporter --mailbox user@example.com --folder \"Sent Items\"");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -c 100");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -c 0  # Export all emails");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -o html  # Export to HTML");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -o both  # Export to JSON and HTML");
+        Console.WriteLine("\nTesting archive access:");
+        Console.WriteLine("  OutlookExporter --test-archive <archive-guid> -m <primary-email>");
+        Console.WriteLine("  Example: OutlookExporter --test-archive d88b8107-7f31-4e0a-999b-723a8ba54ac0 -m Grupo.ComDev@samsys.pt");
         return;
     }
 }
@@ -131,6 +143,60 @@ try
     Console.WriteLine($"\nAuthentication successful!");
     Console.WriteLine($"Logged in as: {user?.DisplayName}");
     Console.WriteLine($"Email: {user?.Mail ?? user?.UserPrincipalName}");
+
+    // If --test-archive flag is set, run archive GUID tests and exit
+    if (testArchiveGuid && !string.IsNullOrEmpty(testArchiveGuidValue))
+    {
+        string primarySmtp = argMailbox ?? user?.Mail ?? user?.UserPrincipalName ?? "";
+
+        Console.WriteLine("\n" + new string('=', 70));
+        Console.WriteLine("EXPERIMENTAL: Testing ArchiveGuid Access");
+        Console.WriteLine(new string('=', 70));
+        Console.WriteLine("This will test if Microsoft Graph API accepts ArchiveGuid as a valid");
+        Console.WriteLine("user identifier for accessing archive mailboxes.");
+        Console.WriteLine("This approach is UNDOCUMENTED and may not work.");
+        Console.WriteLine(new string('=', 70));
+
+        // Run ArchiveGuid test
+        bool archiveGuidWorks = await OutlookExporter.ArchiveGuidTester.TestArchiveGuidAccess(
+            graphClient,
+            testArchiveGuidValue,
+            "Test Archive Mailbox",
+            primarySmtp
+        );
+
+        // Also test ArchiveMsgFolderRoot approach
+        if (!string.IsNullOrEmpty(primarySmtp))
+        {
+            bool archiveMsgFolderRootWorks = await OutlookExporter.ArchiveGuidTester.TestArchiveMsgFolderRoot(
+                graphClient,
+                primarySmtp
+            );
+
+            // Final summary
+            Console.WriteLine("\n" + new string('=', 70));
+            Console.WriteLine("TEST SUMMARY");
+            Console.WriteLine(new string('=', 70));
+            Console.WriteLine($"ArchiveGuid approach:          {(archiveGuidWorks ? "✓ WORKS!" : "✗ Does not work")}");
+            Console.WriteLine($"ArchiveMsgFolderRoot approach: {(archiveMsgFolderRootWorks ? "✓ WORKS!" : "✗ Does not work")}");
+            Console.WriteLine(new string('=', 70));
+
+            if (archiveGuidWorks || archiveMsgFolderRootWorks)
+            {
+                Console.WriteLine("\n🎉 BREAKTHROUGH DISCOVERY! Archive access via Graph API is possible!");
+                Console.WriteLine("Please report your findings and update the documentation.");
+            }
+            else
+            {
+                Console.WriteLine("\n❌ Both approaches failed. This confirms Microsoft's limitation:");
+                Console.WriteLine("   Graph API does not support In-Place Archive mailbox access.");
+                Console.WriteLine("   Recommendation: Use Exchange Online PowerShell or EWS instead.");
+            }
+        }
+
+        Console.WriteLine("\nTest completed. Exiting.\n");
+        return;
+    }
 
     // Variables to track current export settings across multiple export cycles
     string? currentMailbox = argMailbox;
@@ -720,6 +786,57 @@ try
     else
     {
         Console.WriteLine("\nNo folders found.");
+    }
+
+    // Prompt for export count and format on first cycle if not provided via CLI
+    if (exportCycle == 1)
+    {
+        if (currentCount == null)
+        {
+            Console.WriteLine("\n" + new string('=', 50));
+            Console.Write("How many emails to export? (press Enter for 5, or 0 for all): ");
+            string? countInput = Console.ReadLine();
+            if (!string.IsNullOrWhiteSpace(countInput))
+            {
+                if (int.TryParse(countInput.Trim(), out int count))
+                {
+                    currentCount = count;
+                }
+                else
+                {
+                    Console.WriteLine("Invalid count, using default (5).");
+                    currentCount = 5;
+                }
+            }
+            else
+            {
+                currentCount = 5; // Default
+            }
+        }
+
+        if (currentFormat == null)
+        {
+            Console.Write("Export format? (json/html/both, press Enter for json): ");
+            string? formatInput = Console.ReadLine();
+            if (!string.IsNullOrWhiteSpace(formatInput))
+            {
+                string format = formatInput.Trim().ToLower();
+                if (format == "json" || format == "html" || format == "both")
+                {
+                    currentFormat = format;
+                }
+                else
+                {
+                    Console.WriteLine("Invalid format, using json.");
+                    currentFormat = "json";
+                }
+            }
+            else
+            {
+                currentFormat = "json"; // Default
+            }
+            Console.WriteLine(new string('=', 50));
+        }
     }
 
     // HTML Export Function
