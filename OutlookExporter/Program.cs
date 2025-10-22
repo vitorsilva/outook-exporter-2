@@ -2,6 +2,7 @@ using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Graph;
 using System.Text.Json;
+using OutlookExporter;  // For EwsArchiveService
 
 Console.WriteLine("Outlook Email Exporter");
 Console.WriteLine("======================\n");
@@ -13,6 +14,7 @@ int? argCount = null;
 string? argFormat = null;
 bool testArchiveGuid = false;
 string? testArchiveGuidValue = null;
+bool useEws = false;  // Force EWS usage (for archives)
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -59,6 +61,10 @@ for (int i = 0; i < args.Length; i++)
         testArchiveGuidValue = args[i + 1];
         i++; // Skip next argument
     }
+    else if (args[i] == "--use-ews")
+    {
+        useEws = true;
+    }
     else if (args[i] == "--help" || args[i] == "-h")
     {
         Console.WriteLine("Usage: OutlookExporter [options]");
@@ -67,6 +73,7 @@ for (int i = 0; i < args.Length; i++)
         Console.WriteLine("  -f, --folder <name>        Specify folder name to export");
         Console.WriteLine("  -c, --count <number>       Number of emails to export (default: 5, use 0 for all)");
         Console.WriteLine("  -o, --format <format>      Output format: json, html, or both (default: json)");
+        Console.WriteLine("  --use-ews                  Use EWS instead of Graph API (for archives)");
         Console.WriteLine("  --test-archive <guid>      Test if ArchiveGuid can access archive mailbox");
         Console.WriteLine("  -h, --help                 Show this help message");
         Console.WriteLine("\nExamples:");
@@ -75,6 +82,9 @@ for (int i = 0; i < args.Length; i++)
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -c 0  # Export all emails");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -o html  # Export to HTML");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -o both  # Export to JSON and HTML");
+        Console.WriteLine("\nArchive mailbox access (using EWS):");
+        Console.WriteLine("  OutlookExporter --use-ews -m archive@example.com -f \"Sent Items\"");
+        Console.WriteLine("  OutlookExporter --use-ews -m user@example.com -f Inbox -c 100");
         Console.WriteLine("\nTesting archive access:");
         Console.WriteLine("  OutlookExporter --test-archive <archive-guid> -m <primary-email>");
         Console.WriteLine("  Example: OutlookExporter --test-archive d88b8107-7f31-4e0a-999b-723a8ba54ac0 -m Grupo.ComDev@samsys.pt");
@@ -98,6 +108,10 @@ if (argFormat != null)
 {
     Console.WriteLine($"Command-line argument: Format = {argFormat}");
 }
+if (useEws)
+{
+    Console.WriteLine("Mode: EWS (Exchange Web Services) - Archive mailbox access");
+}
 Console.WriteLine();
 
 // Load configuration from appsettings.json
@@ -117,7 +131,16 @@ try
     Console.WriteLine("Initializing authentication...");
 
     // Create DeviceCodeCredential for authentication
-    var scopes = new[] { "User.Read", "User.Read.All", "Mail.Read", "Mail.ReadBasic", "Mail.Read.Shared", "MailboxSettings.Read" };
+    // Scopes for Graph API + EWS (for archive access)
+    var scopes = new[] {
+        "User.Read",
+        "User.Read.All",
+        "Mail.Read",
+        "Mail.ReadBasic",
+        "Mail.Read.Shared",
+        "MailboxSettings.Read",
+        "https://outlook.office365.com/EWS.AccessAsUser.All"  // For EWS archive access
+    };
 
     var options = new DeviceCodeCredentialOptions
     {
@@ -196,6 +219,142 @@ try
 
         Console.WriteLine("\nTest completed. Exiting.\n");
         return;
+    }
+
+    // If EWS mode is enabled, use EWS service for archive access
+    if (useEws)
+    {
+        Console.WriteLine("\n" + new string('=', 70));
+        Console.WriteLine("EWS MODE: Using Exchange Web Services for Archive Access");
+        Console.WriteLine(new string('=', 70));
+        Console.WriteLine("This mode accesses archive mailboxes using EWS.");
+        Console.WriteLine("Graph API does not support archive mailbox access.");
+        Console.WriteLine(new string('=', 70));
+
+        if (string.IsNullOrEmpty(argMailbox))
+        {
+            Console.WriteLine("\nError: --use-ews requires specifying a mailbox with -m/--mailbox");
+            Console.WriteLine("Example: dotnet run -- --use-ews -m archive@example.com -f \"Sent Items\"");
+            return;
+        }
+
+        // Create EWS service
+        var ewsService = new EwsArchiveService(clientId, tenantId);
+
+        try
+        {
+            // Get archive folders
+            Console.WriteLine($"\nRetrieving folders from archive mailbox: {argMailbox}");
+            var archiveFolders = await ewsService.GetArchiveFoldersAsync(argMailbox);
+
+            if (archiveFolders.Count == 0)
+            {
+                Console.WriteLine("\nNo folders found in archive. Make sure In-Place Archive is enabled.");
+                return;
+            }
+
+            // Find or select folder
+            string? selectedFolderId = null;
+            string? selectedFolderName = null;
+
+            if (!string.IsNullOrEmpty(argFolder))
+            {
+                // Find folder by name or path
+                var matchedFolder = archiveFolders.FirstOrDefault(f =>
+                    f.DisplayName.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
+                    f.Path.Equals(argFolder, StringComparison.OrdinalIgnoreCase));
+
+                if (matchedFolder != default)
+                {
+                    selectedFolderId = matchedFolder.Id;
+                    selectedFolderName = matchedFolder.Path;
+                    Console.WriteLine($"✓ Found folder: {selectedFolderName}");
+                }
+                else
+                {
+                    Console.WriteLine($"✗ Error: Folder '{argFolder}' not found in archive.");
+                    Console.WriteLine("\nAvailable folders:");
+                    foreach (var folder in archiveFolders.Take(10))
+                    {
+                        Console.WriteLine($"  - {folder.Path}");
+                    }
+                    if (archiveFolders.Count > 10)
+                    {
+                        Console.WriteLine($"  ... and {archiveFolders.Count - 10} more folders");
+                    }
+                    return;
+                }
+            }
+            else
+            {
+                // Interactive folder selection
+                Console.WriteLine($"\nFound {archiveFolders.Count} folder(s) in archive:\n");
+                for (int i = 0; i < archiveFolders.Count; i++)
+                {
+                    var folder = archiveFolders[i];
+                    Console.WriteLine($"  [{i + 1}] {folder.Path}");
+                    Console.WriteLine($"      Total Items: {folder.TotalItems}");
+                    Console.WriteLine($"      Unread Items: {folder.UnreadItems}");
+                    Console.WriteLine();
+                }
+
+                Console.Write("\nSelect folder to export (enter number): ");
+                var folderSelection = Console.ReadLine();
+
+                if (int.TryParse(folderSelection, out int folderIndex) &&
+                    folderIndex > 0 && folderIndex <= archiveFolders.Count)
+                {
+                    var selectedFolder = archiveFolders[folderIndex - 1];
+                    selectedFolderId = selectedFolder.Id;
+                    selectedFolderName = selectedFolder.Path;
+                }
+                else
+                {
+                    Console.WriteLine("Invalid selection. Exiting.");
+                    return;
+                }
+            }
+
+            // Export emails using EWS
+            int emailCount = argCount ?? 5;
+            Console.WriteLine($"\nExporting {(emailCount == 0 ? "all" : emailCount.ToString())} email(s) from: {selectedFolderName}");
+
+            var emails = await ewsService.ExportArchiveEmailsAsync(argMailbox, selectedFolderId!, emailCount);
+
+            if (emails.Count > 0)
+            {
+                // Export to JSON (same format as Graph API export)
+                var jsonOptions = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                };
+                var json = JsonSerializer.Serialize(emails, jsonOptions);
+
+                var sanitizedFolderName = string.Concat(selectedFolderName.Split(Path.GetInvalidFileNameChars()));
+                var jsonOutputFile = $"exported_emails_{sanitizedFolderName}_ews.json";
+                await File.WriteAllTextAsync(jsonOutputFile, json);
+
+                Console.WriteLine($"\n✓ Exported {emails.Count} email(s) to: {jsonOutputFile}");
+                Console.WriteLine($"  File size: {new FileInfo(jsonOutputFile).Length / 1024.0:F2} KB");
+            }
+            else
+            {
+                Console.WriteLine("\nNo emails found in the selected folder.");
+            }
+
+            Console.WriteLine("\nEWS export completed successfully.");
+            return;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"\n✗ EWS Error: {ex.Message}");
+            if (ex.InnerException != null)
+            {
+                Console.WriteLine($"   Inner Error: {ex.InnerException.Message}");
+            }
+            return;
+        }
     }
 
     // Variables to track current export settings across multiple export cycles
