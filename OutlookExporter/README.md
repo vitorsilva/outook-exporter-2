@@ -156,10 +156,10 @@ dotnet run
 
 **Export specific number of emails:**
 ```bash
-# Export 100 emails from Inbox of specific mailbox
+# Export 100 emails from Inbox of specific mailbox (JSON format)
 dotnet run -- -m "user@company.com" -f "Inbox" -c 100
 
-# Export 50 emails from "Sent Items"
+# Export 50 emails from "Sent Items" (JSON format)
 dotnet run -- -m "shared@company.com" -f "Sent Items" -c 50
 ```
 
@@ -167,6 +167,24 @@ dotnet run -- -m "shared@company.com" -f "Sent Items" -c 50
 ```bash
 # Export ALL emails from specific folder (pagination handles large datasets)
 dotnet run -- -m "user@company.com" -f "Inbox" -c 0
+```
+
+**Export to HTML format:**
+```bash
+# Export emails to HTML (single styled document)
+dotnet run -- -m "user@company.com" -f "Inbox" -o html
+
+# Export all emails to HTML
+dotnet run -- -m "user@company.com" -f "Inbox" -c 0 -o html
+```
+
+**Export to both JSON and HTML:**
+```bash
+# Export to both formats simultaneously
+dotnet run -- -m "user@company.com" -f "Inbox" -o both
+
+# Export all emails to both formats
+dotnet run -- -m "user@company.com" -f "Inbox" -c 0 -o both
 ```
 
 **Quick mailbox export:**
@@ -190,14 +208,16 @@ dotnet run -- --help
 | `--mailbox` | `-m` | Email address of mailbox to export from | `-m "user@company.com"` |
 | `--folder` | `-f` | Folder name or path to export | `-f "Inbox"` or `-f "Inbox/Clients/A"` |
 | `--count` | `-c` | Number of emails to export (0 = all) | `-c 100` or `-c 0` |
+| `--format` | `-o` | Output format: json, html, or both (default: json) | `-o html` or `-o both` |
 | `--help` | `-h` | Show help message | `-h` |
 
 ### Output Files
 
-The application creates JSON files named based on the folder:
-- `exported_emails_Inbox.json` - For Inbox folder
-- `exported_emails_SentItems.json` - For Sent Items
-- `exported_emails_Inbox01-CLIENTESV-ZXBSLOG.json` - For nested folders
+The application creates files named based on the folder and format:
+- `exported_emails_Inbox.json` - JSON format for Inbox folder
+- `exported_emails_Inbox.html` - HTML format for Inbox folder
+- `exported_emails_SentItems.json` - For Sent Items (JSON)
+- `exported_emails_Inbox01-CLIENTESV-ZXBSLOG.html` - For nested folders (HTML)
 
 **JSON structure includes:**
 - Email ID, subject, body (HTML/text)
@@ -206,6 +226,14 @@ The application creates JSON files named based on the folder:
 - Read/unread status, importance, categories
 - Conversation and internet message IDs
 - All metadata except attachments
+
+**HTML output includes:**
+- Professional, styled single-page document
+- Email cards with metadata tables
+- Full email body (rendered HTML or plain text)
+- Read/unread, importance, and draft badges
+- Responsive design (mobile and desktop friendly)
+- Print-friendly CSS
 
 ## Configuration
 

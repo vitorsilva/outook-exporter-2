@@ -34,6 +34,12 @@ dotnet run --project OutlookExporter -- --mailbox "mailbox@example.com" --folder
 dotnet run --project OutlookExporter -- -m "mailbox@example.com" -f "Inbox" -c 100  # Export 100 emails
 dotnet run --project OutlookExporter -- -m "mailbox@example.com" -f "Inbox" -c 0    # Export all emails
 
+# Export to HTML format
+dotnet run --project OutlookExporter -- -m "mailbox@example.com" -f "Inbox" -o html
+
+# Export to both JSON and HTML
+dotnet run --project OutlookExporter -- -m "mailbox@example.com" -f "Inbox" -o both
+
 # Show help
 dotnet run --project OutlookExporter -- --help
 ```

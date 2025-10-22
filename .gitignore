@@ -31,3 +31,5 @@ x86/
 # Exported data (add later if needed)
 *.json
 !**/appsettings.Example.json
+OutlookExporter/exported_*.html
+OutlookExporter/exported_*.json

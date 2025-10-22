@@ -10,6 +10,7 @@ Console.WriteLine("======================\n");
 string? argMailbox = null;
 string? argFolder = null;
 int? argCount = null;
+string? argFormat = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -36,6 +37,20 @@ for (int i = 0; i < args.Length; i++)
         }
         i++; // Skip next argument
     }
+    else if ((args[i] == "--format" || args[i] == "-o") && i + 1 < args.Length)
+    {
+        string format = args[i + 1].ToLower();
+        if (format == "json" || format == "html" || format == "both")
+        {
+            argFormat = format;
+        }
+        else
+        {
+            Console.WriteLine($"Error: Invalid format '{args[i + 1]}'. Must be 'json', 'html', or 'both'.");
+            return;
+        }
+        i++; // Skip next argument
+    }
     else if (args[i] == "--help" || args[i] == "-h")
     {
         Console.WriteLine("Usage: OutlookExporter [options]");
@@ -43,11 +58,14 @@ for (int i = 0; i < args.Length; i++)
         Console.WriteLine("  -m, --mailbox <email>    Specify mailbox email address");
         Console.WriteLine("  -f, --folder <name>      Specify folder name to export");
         Console.WriteLine("  -c, --count <number>     Number of emails to export (default: 5, use 0 for all)");
+        Console.WriteLine("  -o, --format <format>    Output format: json, html, or both (default: json)");
         Console.WriteLine("  -h, --help               Show this help message");
         Console.WriteLine("\nExamples:");
         Console.WriteLine("  OutlookExporter --mailbox user@example.com --folder \"Sent Items\"");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -c 100");
         Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -c 0  # Export all emails");
+        Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -o html  # Export to HTML");
+        Console.WriteLine("  OutlookExporter -m user@example.com -f Inbox -o both  # Export to JSON and HTML");
         return;
     }
 }
@@ -63,6 +81,10 @@ if (argFolder != null)
 if (argCount != null)
 {
     Console.WriteLine($"Command-line argument: Count = {(argCount == 0 ? "all" : argCount.ToString())}");
+}
+if (argFormat != null)
+{
+    Console.WriteLine($"Command-line argument: Format = {argFormat}");
 }
 Console.WriteLine();
 
@@ -573,9 +595,213 @@ try
         Console.WriteLine("\nNo folders found.");
     }
 
-    // Export emails to JSON
+    // HTML Export Function
+    string GenerateHtmlExport(List<Microsoft.Graph.Models.Message> messages, string folderName, string mailboxEmail)
+    {
+        var html = new System.Text.StringBuilder();
+
+        html.AppendLine("<!DOCTYPE html>");
+        html.AppendLine("<html lang=\"en\">");
+        html.AppendLine("<head>");
+        html.AppendLine("    <meta charset=\"UTF-8\">");
+        html.AppendLine("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+        html.AppendLine($"    <title>Email Export - {folderName}</title>");
+        html.AppendLine("    <style>");
+        html.AppendLine("        * { margin: 0; padding: 0; box-sizing: border-box; }");
+        html.AppendLine("        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; color: #333; line-height: 1.6; padding: 20px; }");
+        html.AppendLine("        .container { max-width: 1200px; margin: 0 auto; background-color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }");
+        html.AppendLine("        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }");
+        html.AppendLine("        .header h1 { font-size: 28px; margin-bottom: 10px; }");
+        html.AppendLine("        .header .subtitle { font-size: 16px; opacity: 0.9; }");
+        html.AppendLine("        .header .export-info { margin-top: 15px; font-size: 14px; opacity: 0.8; }");
+        html.AppendLine("        .email-card { border-bottom: 3px solid #f0f0f0; padding: 30px; background-color: white; }");
+        html.AppendLine("        .email-card:nth-child(even) { background-color: #fafafa; }");
+        html.AppendLine("        .email-number { display: inline-block; background-color: #667eea; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; margin-bottom: 15px; }");
+        html.AppendLine("        .metadata-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background-color: white; border: 1px solid #e0e0e0; }");
+        html.AppendLine("        .metadata-table th { background-color: #f8f9fa; text-align: left; padding: 12px; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6; width: 180px; }");
+        html.AppendLine("        .metadata-table td { padding: 12px; border-bottom: 1px solid #e9ecef; }");
+        html.AppendLine("        .metadata-table tr:last-child td { border-bottom: none; }");
+        html.AppendLine("        .email-address { font-family: 'Courier New', monospace; background-color: #e7f3ff; padding: 2px 6px; border-radius: 3px; font-size: 13px; }");
+        html.AppendLine("        .subject { font-size: 20px; font-weight: 600; color: #2c3e50; margin-bottom: 15px; }");
+        html.AppendLine("        .email-body { background-color: #f9f9f9; border-left: 4px solid #667eea; padding: 20px; margin-top: 15px; border-radius: 4px; max-height: 500px; overflow-y: auto; }");
+        html.AppendLine("        .email-body-content { line-height: 1.8; color: #555; }");
+        html.AppendLine("        .badge { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; margin-right: 5px; }");
+        html.AppendLine("        .badge-read { background-color: #d4edda; color: #155724; }");
+        html.AppendLine("        .badge-unread { background-color: #fff3cd; color: #856404; }");
+        html.AppendLine("        .badge-important { background-color: #f8d7da; color: #721c24; }");
+        html.AppendLine("        .badge-draft { background-color: #d1ecf1; color: #0c5460; }");
+        html.AppendLine("        .recipients { display: block; margin-top: 5px; }");
+        html.AppendLine("        .recipient-item { display: inline-block; margin-right: 10px; margin-bottom: 5px; }");
+        html.AppendLine("        @media print { body { background-color: white; } .container { box-shadow: none; } .email-card { page-break-inside: avoid; } }");
+        html.AppendLine("        @media (max-width: 768px) { .container { margin: 0; } .header { padding: 20px; } .email-card { padding: 20px; } .metadata-table th { width: 120px; font-size: 13px; } }");
+        html.AppendLine("    </style>");
+        html.AppendLine("</head>");
+        html.AppendLine("<body>");
+        html.AppendLine("    <div class=\"container\">");
+        html.AppendLine("        <div class=\"header\">");
+        html.AppendLine($"            <h1>Email Export</h1>");
+        html.AppendLine($"            <div class=\"subtitle\">Folder: {System.Web.HttpUtility.HtmlEncode(folderName)} | Mailbox: {System.Web.HttpUtility.HtmlEncode(mailboxEmail)}</div>");
+        html.AppendLine($"            <div class=\"export-info\">Total Emails: {messages.Count} | Exported: {DateTime.Now:yyyy-MM-dd HH:mm:ss}</div>");
+        html.AppendLine("        </div>");
+
+        for (int i = 0; i < messages.Count; i++)
+        {
+            var msg = messages[i];
+            html.AppendLine($"        <div class=\"email-card\">");
+            html.AppendLine($"            <span class=\"email-number\">Email #{i + 1}</span>");
+
+            // Subject
+            html.AppendLine($"            <div class=\"subject\">{System.Web.HttpUtility.HtmlEncode(msg.Subject ?? "(No Subject)")}</div>");
+
+            // Badges
+            if (msg.IsRead == true)
+                html.AppendLine("            <span class=\"badge badge-read\">Read</span>");
+            else
+                html.AppendLine("            <span class=\"badge badge-unread\">Unread</span>");
+
+            if (msg.Importance?.ToString() == "High")
+                html.AppendLine("            <span class=\"badge badge-important\">Important</span>");
+
+            if (msg.IsDraft == true)
+                html.AppendLine("            <span class=\"badge badge-draft\">Draft</span>");
+
+            // Metadata Table
+            html.AppendLine("            <table class=\"metadata-table\">");
+
+            // From
+            html.AppendLine("                <tr>");
+            html.AppendLine("                    <th>From</th>");
+            html.AppendLine($"                    <td><span class=\"email-address\">{System.Web.HttpUtility.HtmlEncode(msg.From?.EmailAddress?.Address ?? "Unknown")}</span> ({System.Web.HttpUtility.HtmlEncode(msg.From?.EmailAddress?.Name ?? "Unknown")})</td>");
+            html.AppendLine("                </tr>");
+
+            // To
+            if (msg.ToRecipients?.Any() == true)
+            {
+                html.AppendLine("                <tr>");
+                html.AppendLine("                    <th>To</th>");
+                html.AppendLine("                    <td><div class=\"recipients\">");
+                foreach (var recipient in msg.ToRecipients)
+                {
+                    html.AppendLine($"                        <span class=\"recipient-item\"><span class=\"email-address\">{System.Web.HttpUtility.HtmlEncode(recipient.EmailAddress?.Address ?? "")}</span> ({System.Web.HttpUtility.HtmlEncode(recipient.EmailAddress?.Name ?? "")})</span>");
+                }
+                html.AppendLine("                    </div></td>");
+                html.AppendLine("                </tr>");
+            }
+
+            // Cc
+            if (msg.CcRecipients?.Any() == true)
+            {
+                html.AppendLine("                <tr>");
+                html.AppendLine("                    <th>Cc</th>");
+                html.AppendLine("                    <td><div class=\"recipients\">");
+                foreach (var recipient in msg.CcRecipients)
+                {
+                    html.AppendLine($"                        <span class=\"recipient-item\"><span class=\"email-address\">{System.Web.HttpUtility.HtmlEncode(recipient.EmailAddress?.Address ?? "")}</span> ({System.Web.HttpUtility.HtmlEncode(recipient.EmailAddress?.Name ?? "")})</span>");
+                }
+                html.AppendLine("                    </div></td>");
+                html.AppendLine("                </tr>");
+            }
+
+            // Bcc
+            if (msg.BccRecipients?.Any() == true)
+            {
+                html.AppendLine("                <tr>");
+                html.AppendLine("                    <th>Bcc</th>");
+                html.AppendLine("                    <td><div class=\"recipients\">");
+                foreach (var recipient in msg.BccRecipients)
+                {
+                    html.AppendLine($"                        <span class=\"recipient-item\"><span class=\"email-address\">{System.Web.HttpUtility.HtmlEncode(recipient.EmailAddress?.Address ?? "")}</span> ({System.Web.HttpUtility.HtmlEncode(recipient.EmailAddress?.Name ?? "")})</span>");
+                }
+                html.AppendLine("                    </div></td>");
+                html.AppendLine("                </tr>");
+            }
+
+            // Received Date
+            html.AppendLine("                <tr>");
+            html.AppendLine("                    <th>Received</th>");
+            html.AppendLine($"                    <td>{msg.ReceivedDateTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Unknown"}</td>");
+            html.AppendLine("                </tr>");
+
+            // Sent Date
+            html.AppendLine("                <tr>");
+            html.AppendLine("                    <th>Sent</th>");
+            html.AppendLine($"                    <td>{msg.SentDateTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Unknown"}</td>");
+            html.AppendLine("                </tr>");
+
+            // Importance
+            html.AppendLine("                <tr>");
+            html.AppendLine("                    <th>Importance</th>");
+            html.AppendLine($"                    <td>{msg.Importance?.ToString() ?? "Normal"}</td>");
+            html.AppendLine("                </tr>");
+
+            // Has Attachments
+            html.AppendLine("                <tr>");
+            html.AppendLine("                    <th>Has Attachments</th>");
+            html.AppendLine($"                    <td>{(msg.HasAttachments == true ? "Yes" : "No")}</td>");
+            html.AppendLine("                </tr>");
+
+            // Categories
+            if (msg.Categories?.Any() == true)
+            {
+                html.AppendLine("                <tr>");
+                html.AppendLine("                    <th>Categories</th>");
+                html.AppendLine($"                    <td>{System.Web.HttpUtility.HtmlEncode(string.Join(", ", msg.Categories))}</td>");
+                html.AppendLine("                </tr>");
+            }
+
+            // Conversation ID
+            if (!string.IsNullOrEmpty(msg.ConversationId))
+            {
+                html.AppendLine("                <tr>");
+                html.AppendLine("                    <th>Conversation ID</th>");
+                html.AppendLine($"                    <td><span class=\"email-address\">{System.Web.HttpUtility.HtmlEncode(msg.ConversationId)}</span></td>");
+                html.AppendLine("                </tr>");
+            }
+
+            html.AppendLine("            </table>");
+
+            // Email Body
+            html.AppendLine("            <div class=\"email-body\">");
+            html.AppendLine("                <div class=\"email-body-content\">");
+
+            if (msg.Body?.ContentType?.ToString() == "Html" && !string.IsNullOrEmpty(msg.Body.Content))
+            {
+                // Render HTML body (sanitized)
+                html.AppendLine($"                    {msg.Body.Content}");
+            }
+            else if (!string.IsNullOrEmpty(msg.Body?.Content))
+            {
+                // Render plain text body
+                html.AppendLine($"                    <pre style=\"white-space: pre-wrap; word-wrap: break-word; font-family: inherit;\">{System.Web.HttpUtility.HtmlEncode(msg.Body.Content)}</pre>");
+            }
+            else if (!string.IsNullOrEmpty(msg.BodyPreview))
+            {
+                // Fallback to body preview
+                html.AppendLine($"                    <p>{System.Web.HttpUtility.HtmlEncode(msg.BodyPreview)}</p>");
+            }
+            else
+            {
+                html.AppendLine("                    <p><em>(No content available)</em></p>");
+            }
+
+            html.AppendLine("                </div>");
+            html.AppendLine("            </div>");
+            html.AppendLine("        </div>");
+        }
+
+        html.AppendLine("    </div>");
+        html.AppendLine("</body>");
+        html.AppendLine("</html>");
+
+        return html.ToString();
+    }
+
+    // Determine export format (default to JSON for backward compatibility)
+    string exportFormat = argFormat ?? "json";
+
+    // Export emails
     Console.WriteLine("\n" + new string('=', 50));
-    Console.WriteLine($"Exporting emails from {selectedFolderName} to JSON...");
+    Console.WriteLine($"Exporting emails from {selectedFolderName}...");
     Console.WriteLine(new string('=', 50));
 
     // Determine how many emails to export
@@ -688,21 +914,37 @@ try
             }
         }).ToList();
 
-        // Serialize to JSON with nice formatting
-        var jsonOptions = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-        };
-        var json = JsonSerializer.Serialize(emailData, jsonOptions);
-
-        // Save to file with folder name
+        // Sanitize folder name for file system
         var sanitizedFolderName = string.Concat(selectedFolderName.Split(Path.GetInvalidFileNameChars()));
-        var outputFile = $"exported_emails_{sanitizedFolderName}.json";
-        await File.WriteAllTextAsync(outputFile, json);
 
-        Console.WriteLine($"✓ Exported {emailData.Count} emails to: {outputFile}");
-        Console.WriteLine($"  File size: {new FileInfo(outputFile).Length / 1024.0:F2} KB");
+        // Export to JSON format
+        if (exportFormat == "json" || exportFormat == "both")
+        {
+            var jsonOptions = new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            };
+            var json = JsonSerializer.Serialize(emailData, jsonOptions);
+
+            var jsonOutputFile = $"exported_emails_{sanitizedFolderName}.json";
+            await File.WriteAllTextAsync(jsonOutputFile, json);
+
+            Console.WriteLine($"✓ Exported {emailData.Count} emails to JSON: {jsonOutputFile}");
+            Console.WriteLine($"  File size: {new FileInfo(jsonOutputFile).Length / 1024.0:F2} KB");
+        }
+
+        // Export to HTML format
+        if (exportFormat == "html" || exportFormat == "both")
+        {
+            var html = GenerateHtmlExport(allMessages, selectedFolderName, selectedMailboxEmail);
+
+            var htmlOutputFile = $"exported_emails_{sanitizedFolderName}.html";
+            await File.WriteAllTextAsync(htmlOutputFile, html);
+
+            Console.WriteLine($"✓ Exported {allMessages.Count} emails to HTML: {htmlOutputFile}");
+            Console.WriteLine($"  File size: {new FileInfo(htmlOutputFile).Length / 1024.0:F2} KB");
+        }
     }
     else
     {
