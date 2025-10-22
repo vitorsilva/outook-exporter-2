@@ -112,7 +112,13 @@ JSON export includes all email properties except attachments:
   "KnownMailboxes": [
     {
       "DisplayName": "Example Shared Mailbox",
-      "Email": "shared@example.com"
+      "Email": "shared@example.com",
+      "IsArchive": false
+    },
+    {
+      "DisplayName": "My Archive Mailbox",
+      "Email": "user-archive@example.com",
+      "IsArchive": true
     }
   ]
 }
@@ -123,12 +129,32 @@ The `KnownMailboxes` configuration allows you to specify mailboxes that should a
 - Delegated mailboxes that don't appear in automatic discovery
 - Frequently accessed shared mailboxes
 - Organization-specific mailboxes
+- **Archive mailboxes** that aren't auto-discovered
 
-Each entry requires:
+Each entry supports:
 - `DisplayName`: Friendly name shown in the mailbox list
 - `Email`: Email address of the mailbox
+- `IsArchive`: Boolean flag (optional, default: false) to explicitly mark as archive mailbox
 
-These mailboxes are added to the list with type "Known" during mailbox discovery (Program.cs:123-139).
+**Example with Archive mailboxes:**
+```json
+{
+  "KnownMailboxes": [
+    {
+      "DisplayName": "Shared Sales Mailbox",
+      "Email": "sales@example.com",
+      "IsArchive": false
+    },
+    {
+      "DisplayName": "My Archive",
+      "Email": "user-archive@example.com",
+      "IsArchive": true
+    }
+  ]
+}
+```
+
+These mailboxes are added to the list with type "Known" or "Known (Archive)" during mailbox discovery (Program.cs:236-258).
 
 ### Account Type Configuration
 - **Personal accounts (Hotmail/Outlook.com)**: TenantId = "consumers"
@@ -147,11 +173,53 @@ Mailbox discovery (Program.cs:126-253) is ONLY executed when NO mailbox is speci
 
 The discovery process includes:
 1. Primary mailbox
-2. Known mailboxes from configuration
+2. Known mailboxes from configuration (can include archives marked with `IsArchive: true`)
 3. Shared/delegated mailboxes (via Azure AD query)
-4. **Archive mailboxes** - Automatically discovers Online Archive mailboxes for all accessible mailboxes (Program.cs:211-253)
+4. **Archive mailboxes** - Attempts to discover Online Archive mailboxes using heuristic patterns (Program.cs:324-390)
 
-Archive mailboxes are accessed using the naming pattern: `{localpart}-archive@{domain}` and appear in the mailbox list with "(Archive)" suffix.
+### Archive Mailbox Detection - Important Limitations
+
+**Graph API Limitation:** Microsoft Graph API **does not officially support** detecting or accessing In-Place Archive (Online Archive) mailboxes. This is a known limitation documented by Microsoft.
+
+**Current Implementation:** The application uses a **heuristic approach** that attempts to discover archives by:
+1. Testing common archive email naming patterns (e.g., `user-archive@domain.com`, `user.archive@domain.com`)
+2. Checking `mailboxSettings.archiveFolder` property (though this refers to a folder in the primary mailbox, not In-Place Archives)
+3. Testing access to potential archive mailboxes
+
+**Archive Naming Patterns Tested:**
+- `{user}-archive@{domain}` (Standard pattern)
+- `{user}.archive@{domain}` (Dot separator)
+- `{user}_archive@{domain}` (Underscore separator)
+- `archive-{user}@{domain}` (Prefix variants)
+- `{user}@archive.{domain}` (Subdomain pattern)
+- Additional variants with capitalization and full "ArchiveMailbox" naming
+
+**Important Notes:**
+- ⚠️ Archive discovery is **unreliable** and depends on your organization's naming conventions
+- ⚠️ The `archiveFolder` property in `mailboxSettings` is NOT the same as In-Place Archive status
+- ⚠️ False negatives are common - archives may exist but not be discovered
+- ✅ Known archives can be configured in `appsettings.json` with `IsArchive: true` for guaranteed access
+
+**Alternative Approaches for Archive Detection:**
+
+1. **PowerShell (Most Reliable):**
+   ```powershell
+   Get-Mailbox -Identity user@example.com | Select-Object DisplayName, ArchiveStatus, ArchiveGuid
+   Get-MailboxStatistics -Identity user@example.com -Archive
+   ```
+   - Requires Exchange Online PowerShell module
+   - Provides official `ArchiveStatus` property (Active/None)
+   - Requires Exchange admin permissions
+
+2. **Exchange Web Services (EWS):**
+   - Can access `ArchiveMsgFolderRoot` well-known folder
+   - EWS is being deprecated by Microsoft (not recommended for new projects)
+
+3. **Configuration-Based (Recommended for this app):**
+   - Manually configure archive mailboxes in `KnownMailboxes` with `IsArchive: true`
+   - Most reliable approach when archive email addresses are known
+
+**Recommendation:** If reliable archive detection is critical, use Exchange Online PowerShell to export archive information to a configuration file, then load it in this application.
 
 ### Folder Matching Logic
 When a folder is specified via CLI argument, the application searches by both DisplayName and full Path (case-insensitive). If not found, it lists available folders and exits (Program.cs:358-387).

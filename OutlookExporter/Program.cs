@@ -245,7 +245,13 @@ try
             {
                 if (!string.IsNullOrEmpty(mailbox.Email))
                 {
-                    availableMailboxes.Add((mailbox.DisplayName ?? mailbox.Email, mailbox.Email, "Known"));
+                    // Use IsArchive flag to determine mailbox type
+                    string mailboxType = mailbox.IsArchive ? "Known (Archive)" : "Known";
+                    string displayName = mailbox.IsArchive && !mailbox.DisplayName?.Contains("Archive") == true
+                        ? $"{mailbox.DisplayName} (Archive)"
+                        : mailbox.DisplayName ?? mailbox.Email;
+
+                    availableMailboxes.Add((displayName, mailbox.Email, mailboxType));
                 }
             }
         }
@@ -323,6 +329,8 @@ try
 
         // Discover archive mailboxes for accessible mailboxes
         Console.WriteLine("\nAttempting to discover archive mailboxes...");
+        Console.WriteLine("Note: Graph API does not officially support archive detection.");
+        Console.WriteLine("Using heuristic patterns - results may vary by organization.\n");
         var archiveCount = 0;
         var mailboxesToCheck = new List<(string DisplayName, string Email, string Type)>(availableMailboxes);
 
@@ -332,13 +340,36 @@ try
             {
                 Console.Write($"  Checking for archive: {mailbox.DisplayName}...");
 
+                // First, try to check mailboxSettings.archiveFolder (though it's for primary mailbox archive folder, not In-Place Archive)
+                try
+                {
+                    var settings = await graphClient.Users[mailbox.Email].MailboxSettings.GetAsync();
+                    if (!string.IsNullOrEmpty(settings?.ArchiveFolder))
+                    {
+                        Console.Write($" [archiveFolder: {settings.ArchiveFolder.Substring(0, Math.Min(8, settings.ArchiveFolder.Length))}...]");
+                    }
+                }
+                catch
+                {
+                    // MailboxSettings check failed - continue with pattern matching
+                }
+
                 // Try multiple archive naming patterns
+                // Note: These are heuristic patterns and may not work for all organizations
+                string localPart = mailbox.Email.Split('@')[0];
+                string domain = mailbox.Email.Split('@')[1];
+
                 string[] archivePatterns = new[]
                 {
-                    $"{mailbox.Email.Split('@')[0]}-archive@{mailbox.Email.Split('@')[1]}",  // Standard pattern
-                    $"{mailbox.Email.Split('@')[0]}-Archive@{mailbox.Email.Split('@')[1]}",  // Capital A
-                    $"{mailbox.Email.Split('@')[0]}.archive@{mailbox.Email.Split('@')[1]}",  // Dot separator
-                    $"archive.{mailbox.Email}",  // Prefix pattern
+                    $"{localPart}-archive@{domain}",           // Standard pattern: user-archive@domain.com
+                    $"{localPart}-Archive@{domain}",           // Capital A variant
+                    $"{localPart}.archive@{domain}",           // Dot separator: user.archive@domain.com
+                    $"{localPart}_archive@{domain}",           // Underscore separator: user_archive@domain.com
+                    $"archive-{localPart}@{domain}",           // Prefix with dash: archive-user@domain.com
+                    $"archive.{localPart}@{domain}",           // Prefix with dot: archive.user@domain.com
+                    $"{localPart}@archive.{domain}",           // Subdomain: user@archive.domain.com
+                    $"{localPart}-ArchiveMailbox@{domain}",    // Full word variant
+                    $"{localPart}.ArchiveMailbox@{domain}",    // Full word with dot
                 };
 
                 bool found = false;
@@ -1073,4 +1104,5 @@ public class KnownMailbox
 {
     public string? DisplayName { get; set; }
     public string? Email { get; set; }
+    public bool IsArchive { get; set; } = false;  // Flag to explicitly mark known archives
 }
