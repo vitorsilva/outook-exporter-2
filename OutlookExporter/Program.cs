@@ -132,12 +132,103 @@ try
     Console.WriteLine($"Logged in as: {user?.DisplayName}");
     Console.WriteLine($"Email: {user?.Mail ?? user?.UserPrincipalName}");
 
-    // Discover available mailboxes
-    Console.WriteLine("\n" + new string('=', 50));
-    Console.WriteLine("Discovering available mailboxes...");
-    Console.WriteLine(new string('=', 50));
+    // Variables to track current export settings across multiple export cycles
+    string? currentMailbox = argMailbox;
+    string? currentFolder = argFolder;
+    int? currentCount = argCount;
+    string? currentFormat = argFormat;
+    bool continueExporting = true;
+    int exportCycle = 0;
+
+    // Function to prompt for parameters with defaults
+    void PromptForParameters()
+    {
+        Console.WriteLine("\n" + new string('=', 50));
+        Console.WriteLine("Enter export parameters (press Enter to keep current value):");
+        Console.WriteLine(new string('=', 50));
+
+        // Prompt for mailbox
+        Console.Write($"Mailbox [{currentMailbox ?? "none"}]: ");
+        string? mailboxInput = Console.ReadLine();
+        if (!string.IsNullOrWhiteSpace(mailboxInput))
+        {
+            currentMailbox = mailboxInput.Trim();
+        }
+
+        // Prompt for folder
+        Console.Write($"Folder [{currentFolder ?? "none"}]: ");
+        string? folderInput = Console.ReadLine();
+        if (!string.IsNullOrWhiteSpace(folderInput))
+        {
+            currentFolder = folderInput.Trim();
+        }
+
+        // Prompt for count
+        Console.Write($"Count [{currentCount?.ToString() ?? "5"}]: ");
+        string? countInput = Console.ReadLine();
+        if (!string.IsNullOrWhiteSpace(countInput))
+        {
+            if (int.TryParse(countInput.Trim(), out int count))
+            {
+                currentCount = count;
+            }
+            else
+            {
+                Console.WriteLine("Invalid count, keeping previous value.");
+            }
+        }
+
+        // Prompt for format
+        Console.Write($"Format [{currentFormat ?? "json"}]: ");
+        string? formatInput = Console.ReadLine();
+        if (!string.IsNullOrWhiteSpace(formatInput))
+        {
+            string format = formatInput.Trim().ToLower();
+            if (format == "json" || format == "html" || format == "both")
+            {
+                currentFormat = format;
+            }
+            else
+            {
+                Console.WriteLine("Invalid format (must be json, html, or both), keeping previous value.");
+            }
+        }
+
+        Console.WriteLine();
+    }
+
+    // Main export loop - allows multiple exports without re-authentication
+    do
+    {
+        exportCycle++;
+
+        // Show export cycle number if this is not the first iteration
+        if (exportCycle > 1)
+        {
+            Console.WriteLine("\n" + new string('=', 50));
+            Console.WriteLine($"Export Cycle #{exportCycle}");
+            Console.WriteLine(new string('=', 50));
+
+            // Prompt for new parameters with defaults from previous export
+            PromptForParameters();
+        }
+
+        // Track previous mailbox to detect changes
+        string? previousMailboxEmail = exportCycle == 1 ? null : currentMailbox;
+
+        // Mailbox discovery is only needed if:
+        // 1. First iteration AND no mailbox specified in args, OR
+        // 2. Subsequent iteration AND mailbox changed from previous
+        bool needMailboxDiscovery = (exportCycle == 1 && currentMailbox == null);
 
     var availableMailboxes = new List<(string DisplayName, string Email, string Type)>();
+
+    if (needMailboxDiscovery)
+    {
+        // Discover available mailboxes
+        Console.WriteLine("\n" + new string('=', 50));
+        Console.WriteLine("Discovering available mailboxes...");
+        Console.WriteLine(new string('=', 50));
 
     // Add primary mailbox
     availableMailboxes.Add((user?.DisplayName ?? "Primary Mailbox", user?.Mail ?? user?.UserPrincipalName ?? "", "Primary"));
@@ -160,8 +251,8 @@ try
         }
     }
 
-    // Only discover mailboxes if not specified via command-line argument
-    if (argMailbox == null)
+    // Only discover mailboxes if not specified
+    if (currentMailbox == null)
     {
         // Try to discover shared mailboxes
         Console.WriteLine("\nAttempting to discover shared/delegated mailboxes...");
@@ -300,22 +391,27 @@ try
     }
     else
     {
-        Console.WriteLine("\nSkipping mailbox discovery (mailbox specified via command-line).");
+        Console.WriteLine("\nSkipping mailbox discovery (mailbox specified).");
+    }
+    }
+    else
+    {
+        Console.WriteLine("\nSkipping mailbox discovery (using previous mailbox).");
     }
 
     string selectedMailboxEmail = "";
     string selectedMailboxName = "";
     string? selection = null;
 
-    // Check if mailbox was provided via command-line argument
-    if (argMailbox != null)
+    // Check if mailbox was specified (from args or current setting)
+    if (currentMailbox != null)
     {
-        Console.WriteLine($"\nUsing mailbox from command-line argument: {argMailbox}");
-        selectedMailboxEmail = argMailbox;
+        Console.WriteLine($"\nUsing mailbox: {currentMailbox}");
+        selectedMailboxEmail = currentMailbox;
 
         // Try to find the display name from available mailboxes
         var matchedMailbox = availableMailboxes.FirstOrDefault(m =>
-            m.Email.Equals(argMailbox, StringComparison.OrdinalIgnoreCase));
+            m.Email.Equals(currentMailbox, StringComparison.OrdinalIgnoreCase));
 
         if (matchedMailbox != default)
         {
@@ -438,9 +534,9 @@ try
                     ));
 
                     // Check if this is the target folder (if specified via CLI)
-                    if (argFolder != null &&
-                        (folderPath.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
-                         folder.DisplayName?.Equals(argFolder, StringComparison.OrdinalIgnoreCase) == true))
+                    if (currentFolder != null &&
+                        (folderPath.Equals(currentFolder, StringComparison.OrdinalIgnoreCase) ||
+                         folder.DisplayName?.Equals(currentFolder, StringComparison.OrdinalIgnoreCase) == true))
                     {
                         folderFound = true;
                         return false; // Stop searching
@@ -482,8 +578,8 @@ try
                 ));
 
                 // Check if this is the target folder (if specified via CLI)
-                if (argFolder != null &&
-                    folder.DisplayName?.Equals(argFolder, StringComparison.OrdinalIgnoreCase) == true)
+                if (currentFolder != null &&
+                    folder.DisplayName?.Equals(currentFolder, StringComparison.OrdinalIgnoreCase) == true)
                 {
                     folderFound = true;
                     return false; // Stop searching
@@ -507,7 +603,7 @@ try
     if (allFolders.Count > 0)
     {
         // Only print all folders if no specific folder was requested or if we're in interactive mode
-        if (argFolder == null)
+        if (currentFolder == null)
         {
             Console.WriteLine($"\nFound {allFolders.Count} mail folder(s) (including subfolders):\n");
 
@@ -528,14 +624,14 @@ try
         Console.WriteLine("\nFolder listing completed successfully.");
 
         // Check if folder was provided via command-line argument
-        if (argFolder != null)
+        if (currentFolder != null)
         {
-            Console.WriteLine($"\nUsing folder from command-line argument: {argFolder}");
+            Console.WriteLine($"\nUsing folder from command-line argument: {currentFolder}");
 
             // Try to find folder by name or path (case-insensitive)
             var matchedFolder = allFolders.FirstOrDefault(f =>
-                f.DisplayName.Equals(argFolder, StringComparison.OrdinalIgnoreCase) ||
-                f.Path.Equals(argFolder, StringComparison.OrdinalIgnoreCase));
+                f.DisplayName.Equals(currentFolder, StringComparison.OrdinalIgnoreCase) ||
+                f.Path.Equals(currentFolder, StringComparison.OrdinalIgnoreCase));
 
             if (matchedFolder != default)
             {
@@ -545,7 +641,7 @@ try
             }
             else
             {
-                Console.WriteLine($"✗ Error: Folder '{argFolder}' not found.");
+                Console.WriteLine($"✗ Error: Folder '{currentFolder}' not found.");
                 Console.WriteLine("\nAvailable folders:");
                 foreach (var folder in allFolders.Take(10))
                 {
@@ -797,7 +893,7 @@ try
     }
 
     // Determine export format (default to JSON for backward compatibility)
-    string exportFormat = argFormat ?? "json";
+    string exportFormat = currentFormat ?? "json";
 
     // Export emails
     Console.WriteLine("\n" + new string('=', 50));
@@ -805,8 +901,8 @@ try
     Console.WriteLine(new string('=', 50));
 
     // Determine how many emails to export
-    int emailCount = argCount ?? 5; // Default to 5 if not specified
-    bool exportAll = argCount == 0;
+    int emailCount = currentCount ?? 5; // Default to 5 if not specified
+    bool exportAll = currentCount == 0;
 
     var allMessages = new List<Microsoft.Graph.Models.Message>();
 
@@ -952,6 +1048,15 @@ try
     }
 
     Console.WriteLine("\nExport completed successfully.");
+
+    // Ask if user wants to continue with another export
+    Console.Write("\nDo you want to export another folder? (y/n): ");
+    string? continueResponse = Console.ReadLine();
+    continueExporting = (continueResponse?.Trim().ToLower() == "y");
+
+    } while (continueExporting);
+
+    Console.WriteLine("\nDone.");
 }
 catch (Exception ex)
 {
@@ -960,9 +1065,8 @@ catch (Exception ex)
     {
         Console.WriteLine($"Inner Error: {ex.InnerException.Message}");
     }
+    Console.WriteLine("\nDone.");
 }
-
-Console.WriteLine("\nDone.");
 
 // Configuration model for known mailboxes
 public class KnownMailbox
