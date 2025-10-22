@@ -6,6 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Outlook Email Exporter - A .NET 8.0 console application that exports emails from Microsoft 365/Outlook.com mailboxes to JSON format using Microsoft Graph API with Device Code Flow authentication.
 
+## Quick Setup for SAMSYS Team Members
+
+**For colleagues within the SAMSYS organization:**
+
+Admin consent has already been granted organization-wide. You only need to:
+1. Copy `appsettings.Example.json` to `appsettings.Development.json`
+2. Set `ClientId`: `5723b5d0-bf95-4e8f-97f4-dbaf30a9fad9`
+3. Set `TenantId`: `0b474a1c-e4d1-477f-95cb-9a74ddada3a3`
+4. Run `dotnet restore && dotnet run`
+
+**No Azure Portal work needed!** See README.md for full details.
+
 ## Common Commands
 
 ### Build and Run

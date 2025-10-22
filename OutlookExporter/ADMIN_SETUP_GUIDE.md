@@ -4,6 +4,23 @@
 
 This document provides instructions for configuring the Outlook Email Exporter application in your organization's Azure Active Directory tenant.
 
+---
+
+## 📢 Important Notice for Team Members
+
+**If you're a regular user/developer within the SAMSYS organization:**
+
+✅ **Admin consent has ALREADY been granted organization-wide**
+
+You do NOT need to read this document or perform any Azure Portal configuration. You only need to:
+1. Copy `appsettings.Example.json` to `appsettings.Development.json`
+2. Add the ClientId and TenantId (see README.md "Quick Setup for Team Members" section)
+3. Run the application
+
+**This document is ONLY for system administrators setting up the app in a NEW organization or troubleshooting permission issues.**
+
+---
+
 ## Application Information
 
 **Application Name:** Outlook Email Exporter

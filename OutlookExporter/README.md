@@ -24,7 +24,47 @@ A C# console application to export emails from Outlook.com/Microsoft 365 to JSON
 - **API**: Microsoft Graph API
 - **Output Format**: JSON
 
-## Setup Instructions
+---
+
+## 🚀 Quick Setup for Team Members (SAMSYS Organization)
+
+**If you're a colleague within the SAMSYS organization, setup is VERY simple:**
+
+### ✅ What You Need to Do:
+
+1. **Install .NET 8.0 SDK** (if not already installed)
+2. **Copy the example config file:**
+   ```bash
+   # In the OutlookExporter folder:
+   cp appsettings.Example.json appsettings.Development.json
+   ```
+3. **Edit `appsettings.Development.json`** and replace `YOUR_CLIENT_ID_HERE` with:
+   ```json
+   {
+     "AzureAd": {
+       "ClientId": "5723b5d0-bf95-4e8f-97f4-dbaf30a9fad9",
+       "TenantId": "0b474a1c-e4d1-477f-95cb-9a74ddada3a3"
+     }
+   }
+   ```
+4. **Run the application:**
+   ```bash
+   dotnet restore
+   dotnet run
+   ```
+
+### ❌ What You DON'T Need to Do:
+
+- **NO Azure Portal access needed**
+- **NO app registration needed**
+- **NO admin consent needed** (already granted organization-wide)
+- **NO additional permissions needed**
+
+**That's it!** Admin consent has already been granted for the entire organization. You just need the configuration file with the correct ClientId and TenantId, then authenticate with your organizational account when prompted.
+
+---
+
+## Setup Instructions (For New Organizations or Personal Use)
 
 ### Step 1: Azure App Registration
 
